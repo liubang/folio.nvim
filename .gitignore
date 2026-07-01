@@ -1,0 +1,15 @@
+# Build artifacts
+/folio
+bin/
+bin/
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
