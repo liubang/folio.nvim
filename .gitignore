@@ -1,7 +1,5 @@
 # Build artifacts
-/folio
-bin/
-bin/
+build/
 
 # Go
 vendor/
