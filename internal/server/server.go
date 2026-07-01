@@ -100,12 +100,15 @@ func (s *Server) Port() int {
 
 // staticDir returns the path to the frontend/ assets directory.
 func (s *Server) staticDir() string {
-	// Resolve relative to the binary, not CWD.
+	// Resolve relative to the binary location.
+	// Binary is at <plugin>/build/folio, frontend is at <plugin>/frontend/.
 	if exe, err := os.Executable(); err == nil {
-		binDir := filepath.Dir(exe)
-		candidate := filepath.Join(binDir, "frontend")
-		if info, err2 := os.Stat(candidate); err2 == nil && info.IsDir() {
-			return candidate
+		binDir := filepath.Dir(exe) // <plugin>/build/
+		for _, rel := range []string{"../frontend", "frontend"} {
+			candidate := filepath.Join(binDir, rel)
+			if info, err2 := os.Stat(candidate); err2 == nil && info.IsDir() {
+				return candidate
+			}
 		}
 	}
 	// Fallback: CWD-relative search (useful during development).
