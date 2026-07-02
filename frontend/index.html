@@ -6,195 +6,629 @@
   <title>folio preview</title>
   <!-- KaTeX for LaTeX math -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.21/katex.min.css">
-  <!-- Mermaid for diagram rendering -->
+  <!-- Syntax highlight themes -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <style>
+    /* ═══════════════════════════════════════════════════════════════
+       Design tokens
+       ═══════════════════════════════════════════════════════════════ */
     :root {
-      --bg: #ffffff;
-      --fg: #1a1a1a;
-      --code-bg: #f5f5f5;
-      --border: #e0e0e0;
-      --link: #2563eb;
-      --muted: #6b7280;
-      --highlight-bg: #fef3c7;
-      --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --bg:            #ffffff;
+      --fg:            #1f2328;
+      --fg-secondary:  #656d76;
+      --code-bg:       #f6f8fa;
+      --code-border:   #d1d9e0;
+      --border:        #d1d9e0;
+      --border-heavy:  #c9d1d9;
+      --link:          #0969da;
+      --link-hover:    #0550ae;
+      --highlight-bg:  rgba(255, 213, 79, 0.15);
+      --highlight-border: #f5c518;
+      --success:       #1a7f37;
+      --warning:       #9a6700;
+      --danger:        #d1242f;
+      --info:          #0969da;
+      --note:          #6e40c9;
+      --table-row-alt: #f6f8fa;
+      --table-hover:   #eef1f6;
+      --shadow-sm:     0 1px 3px rgba(0,0,0,0.08);
+      --shadow-md:     0 4px 12px rgba(0,0,0,0.1);
+      --radius:        6px;
+      --radius-lg:     10px;
+      --font-mono:     "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+      --font-sans:     -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      --font-size:     16px;
+      --line-height:   1.75;
+      --content-width: 860px;
     }
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #1e1e1e;
-        --fg: #e0e0e0;
-        --code-bg: #2a2a2a;
-        --border: #3a3a3a;
-        --link: #60a5fa;
-        --muted: #9ca3af;
-        --highlight-bg: #422006;
+        --bg:            #0d1117;
+        --fg:            #e6edf3;
+        --fg-secondary:  #8b949e;
+        --code-bg:       #161b22;
+        --code-border:   #30363d;
+        --border:        #30363d;
+        --border-heavy:  #484f58;
+        --link:          #58a6ff;
+        --link-hover:    #79c0ff;
+        --highlight-bg:  rgba(255, 213, 79, 0.08);
+        --highlight-border: #b08800;
+        --success:       #3fb950;
+        --warning:       #d29922;
+        --danger:        #f85149;
+        --info:          #58a6ff;
+        --note:          #a371f7;
+        --table-row-alt: #161b22;
+        --table-hover:   #1c2128;
+        --shadow-sm:     0 1px 3px rgba(0,0,0,0.3);
+        --shadow-md:     0 4px 12px rgba(0,0,0,0.4);
       }
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* ═══════════════════════════════════════════════════════════════
+       Reset & base
+       ═══════════════════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      font-size: var(--font-size);
+      scroll-behavior: smooth;
+      -webkit-text-size-adjust: 100%;
+    }
 
     body {
       font-family: var(--font-sans);
       background: var(--bg);
       color: var(--fg);
-      line-height: 1.7;
-      padding: 2rem;
-      max-width: 900px;
+      line-height: var(--line-height);
+      padding: 2.5rem 2rem 4rem;
+      max-width: var(--content-width);
       margin: 0 auto;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
     }
 
+    ::selection {
+      background: rgba(9, 105, 218, 0.2);
+    }
+    @media (prefers-color-scheme: dark) {
+      ::selection { background: rgba(88, 166, 255, 0.25); }
+    }
+
+    /* Custom scrollbar (WebKit) */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-heavy);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--fg-secondary); }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Headings
+       ═══════════════════════════════════════════════════════════════ */
     article h1, article h2, article h3, article h4, article h5, article h6 {
-      margin-top: 1.5em;
+      margin-top: 1.75em;
       margin-bottom: 0.5em;
+      font-weight: 600;
       line-height: 1.3;
+      letter-spacing: -0.01em;
     }
-    article h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 0.3em; }
-    article h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
-    article h3 { font-size: 1.25rem; }
+    article > h1:first-child,
+    article > h2:first-child,
+    article > h3:first-child {
+      margin-top: 0;
+    }
 
+    article h1 {
+      font-size: 2em;
+      padding-bottom: 0.3em;
+    }
+    article h2 {
+      font-size: 1.5em;
+      padding-bottom: 0.25em;
+      border-bottom: 1px solid var(--border);
+    }
+    article h3 { font-size: 1.25em; }
+    article h4 { font-size: 1em; }
+    article h5 { font-size: 0.875em; }
+    article h6 { font-size: 0.85em; color: var(--fg-secondary); }
+
+    /* Reduce gap between consecutive same-level headings */
+    article h2 + h2 { margin-top: 1em; }
+    article h3 + h3 { margin-top: 0.75em; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Paragraph, inline elements
+       ═══════════════════════════════════════════════════════════════ */
     article p { margin-bottom: 1em; }
 
-    article a { color: var(--link); text-decoration: none; }
-    article a:hover { text-decoration: underline; }
+    article a {
+      color: var(--link);
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+      transition: color 0.2s ease, border-color 0.2s ease;
+    }
+    article a:hover {
+      color: var(--link-hover);
+      border-bottom-color: var(--link-hover);
+    }
 
-    /* ── Code blocks ─────────────────────────────────── */
-    article pre {
+    article strong { font-weight: 600; }
+    article em { font-style: italic; }
+    article del { color: var(--fg-secondary); text-decoration: line-through; }
+    article mark {
+      background: rgba(255, 213, 79, 0.3);
+      padding: 0.1em 0.2em;
+      border-radius: 2px;
+    }
+    article abbr[title] {
+      text-decoration: underline dotted;
+      cursor: help;
+    }
+    article sup, article sub { font-size: 0.75em; }
+    article kbd {
+      display: inline-block;
+      padding: 0.1em 0.4em;
+      font-family: var(--font-mono);
+      font-size: 0.8em;
+      line-height: 1;
+      color: var(--fg);
       background: var(--code-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0;
-      overflow-x: auto;
-      margin-bottom: 1.25em;
+      border: 1px solid var(--border-heavy);
+      border-bottom-width: 2px;
+      border-radius: 3px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Inline code
+       ═══════════════════════════════════════════════════════════════ */
+    article :not(pre) > code {
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      padding: 0.2em 0.4em;
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
+      border-radius: var(--radius);
+      word-break: break-word;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Code blocks
+       ═══════════════════════════════════════════════════════════════ */
+    article pre {
       position: relative;
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 1.25em;
+      overflow: hidden;
+      min-height: 2.5em;
     }
     article pre > code {
       display: block;
-      padding: 1rem;
+      padding: 1em 1.25em;
       overflow-x: auto;
       font-family: var(--font-mono);
       font-size: 0.85em;
       line-height: 1.6;
+      tab-size: 4;
+      -moz-tab-size: 4;
     }
-    /* Override hljs background — use our pre background instead. */
+    /* Override hljs background */
     article pre > code.hljs {
       background: transparent;
-      padding: 1rem;
+      padding: 1em 1.25em;
     }
-    /* Language label badge. */
-    article pre > code[class*="language-"]::before {
+
+    /* Language badge */
+    article pre > code[data-lang]::before {
       content: attr(data-lang);
       position: absolute;
       top: 0;
-      right: 0.75rem;
-      padding: 0.15em 0.6em;
+      right: 0;
+      padding: 0.2em 0.7em;
       font-size: 0.7em;
       font-family: var(--font-mono);
-      color: var(--muted);
+      color: var(--fg-secondary);
       background: var(--code-bg);
-      border-bottom-left-radius: 6px;
-      border-left: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-    /* Inline code. */
-    article :not(pre) > code {
-      background: var(--code-bg);
-      padding: 0.15em 0.4em;
-      border-radius: 3px;
-      font-family: var(--font-mono);
-      font-size: 0.9em;
+      border-bottom-left-radius: var(--radius);
+      border-left: 1px solid var(--code-border);
+      border-bottom: 1px solid var(--code-border);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      user-select: none;
+      pointer-events: none;
     }
 
+    /* Copy button */
+    .folio-copy-btn {
+      position: absolute;
+      top: 0.5em;
+      right: 0.5em;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      color: var(--fg-secondary);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s, background 0.15s, color 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+    }
+    article pre:hover .folio-copy-btn { opacity: 1; }
+    .folio-copy-btn:hover {
+      background: var(--code-bg);
+      color: var(--fg);
+    }
+    .folio-copy-btn.copied {
+      opacity: 1;
+      color: var(--success);
+      border-color: var(--success);
+    }
+    .folio-copy-btn svg { width: 16px; height: 16px; }
+
+    /* When language badge present, shift copy button left */
+    article pre > code[data-lang] ~ .folio-copy-btn { right: auto; left: 0.5em; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Blockquotes & admonitions
+       ═══════════════════════════════════════════════════════════════ */
     article blockquote {
-      border-left: 4px solid var(--link);
-      padding: 0.25em 1em;
-      margin-bottom: 1em;
-      color: var(--muted);
+      margin-bottom: 1.25em;
+      padding: 0.75em 1em;
+      border-left: 4px solid var(--border-heavy);
+      color: var(--fg);
+      background: var(--code-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+    article blockquote > :last-child { margin-bottom: 0; }
+    article blockquote blockquote {
+      margin-top: 0.5em;
+      background: rgba(0,0,0,0.03);
+    }
+    @media (prefers-color-scheme: dark) {
+      article blockquote blockquote { background: rgba(255,255,255,0.03); }
     }
 
-    article ul, article ol { padding-left: 2em; margin-bottom: 1em; }
+    /* GitHub-flavored admonitions: > [!NOTE], > [!WARNING], etc. */
+    article blockquote.admonition-note    { border-left-color: var(--info);    background: rgba(9, 105, 218, 0.06); }
+    article blockquote.admonition-tip     { border-left-color: var(--success); background: rgba(26, 127, 55, 0.06); }
+    article blockquote.admonition-important { border-left-color: var(--note); background: rgba(110, 64, 201, 0.06); }
+    article blockquote.admonition-warning { border-left-color: var(--warning); background: rgba(154, 103, 0, 0.06); }
+    article blockquote.admonition-caution { border-left-color: var(--danger);  background: rgba(209, 36, 47, 0.06); }
+    @media (prefers-color-scheme: dark) {
+      article blockquote.admonition-note    { background: rgba(88, 166, 255, 0.08); }
+      article blockquote.admonition-tip     { background: rgba(63, 185, 80, 0.08); }
+      article blockquote.admonition-important { background: rgba(163, 113, 247, 0.08); }
+      article blockquote.admonition-warning { background: rgba(210, 153, 34, 0.08); }
+      article blockquote.admonition-caution { background: rgba(248, 81, 73, 0.08); }
+    }
+
+    .admonition-title {
+      display: flex;
+      align-items: center;
+      gap: 0.4em;
+      font-weight: 600;
+      margin-bottom: 0.25em;
+      text-transform: capitalize;
+    }
+    .admonition-title svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .admonition-note    .admonition-title { color: var(--info); }
+    .admonition-tip     .admonition-title { color: var(--success); }
+    .admonition-important .admonition-title { color: var(--note); }
+    .admonition-warning .admonition-title { color: var(--warning); }
+    .admonition-caution .admonition-title { color: var(--danger); }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Lists
+       ═══════════════════════════════════════════════════════════════ */
+    article ul, article ol {
+      padding-left: 2em;
+      margin-bottom: 1em;
+    }
     article li { margin-bottom: 0.25em; }
+    article li > p { margin-bottom: 0.25em; }
+    article li > ul, article li > ol { margin-bottom: 0; margin-top: 0.25em; }
 
-    article img { max-width: 100%; height: auto; border-radius: 6px; margin: 1em 0; }
+    /* Task list checkboxes (GFM) */
+    article li.task-list-item {
+      list-style: none;
+      margin-left: -1.5em;
+    }
+    article li.task-list-item > input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 1em;
+      height: 1em;
+      border: 2px solid var(--border-heavy);
+      border-radius: 3px;
+      margin-right: 0.4em;
+      vertical-align: -0.15em;
+      cursor: default;
+      position: relative;
+    }
+    article li.task-list-item > input[type="checkbox"]:checked {
+      background: var(--link);
+      border-color: var(--link);
+    }
+    article li.task-list-item > input[type="checkbox"]:checked::after {
+      content: '';
+      position: absolute;
+      left: 0.2em;
+      top: 0.02em;
+      width: 0.35em;
+      height: 0.6em;
+      border: solid white;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
 
-    article hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
-
+    /* ═══════════════════════════════════════════════════════════════
+       Tables
+       ═══════════════════════════════════════════════════════════════ */
+    article .table-wrapper {
+      overflow-x: auto;
+      margin-bottom: 1.25em;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
     article table {
       border-collapse: collapse;
       width: 100%;
-      margin-bottom: 1em;
+      margin-bottom: 0;
+      font-size: 0.9em;
     }
     article th, article td {
-      border: 1px solid var(--border);
-      padding: 0.5em 0.75em;
+      padding: 0.6em 1em;
       text-align: left;
+      border-bottom: 1px solid var(--border);
     }
-    article th { background: var(--code-bg); font-weight: 600; }
+    article th {
+      font-weight: 600;
+      background: var(--code-bg);
+      white-space: nowrap;
+    }
+    article tr:last-child td { border-bottom: none; }
+    article tbody tr:nth-child(even) { background: var(--table-row-alt); }
+    article tbody tr:hover { background: var(--table-hover); }
+    /* Standalone tables (no wrapper) */
+    article > table {
+      margin-bottom: 1.25em;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
 
-    /* Scroll-sync highlight */
+    /* ═══════════════════════════════════════════════════════════════
+       Images
+       ═══════════════════════════════════════════════════════════════ */
+    article img {
+      max-width: 100%;
+      height: auto;
+      border-radius: var(--radius);
+      transition: box-shadow 0.2s;
+    }
+    /* Standalone images: block-level, centered, with spacing and zoom cursor */
+    article > p > img:only-child {
+      display: block;
+      margin: 0.5em auto;
+      cursor: zoom-in;
+    }
+    article > p > img:only-child:hover {
+      box-shadow: var(--shadow-md);
+    }
+
+    /* Image lightbox */
+    .folio-lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0, 0, 0, 0.85);
+      cursor: zoom-out;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    .folio-lightbox.active { display: flex; }
+    .folio-lightbox img {
+      max-width: 92vw;
+      max-height: 92vh;
+      object-fit: contain;
+      border-radius: var(--radius-lg);
+      cursor: zoom-out;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+      animation: folio-zoom-in 0.2s ease-out;
+    }
+    @keyframes folio-zoom-in {
+      from { transform: scale(0.9); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Horizontal rule
+       ═══════════════════════════════════════════════════════════════ */
+    article hr {
+      border: none;
+      height: 1px;
+      background: var(--border);
+      margin: 2em 0;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Definition list (if used via extensions)
+       ═══════════════════════════════════════════════════════════════ */
+    article dl { margin-bottom: 1em; }
+    article dt { font-weight: 600; margin-top: 0.75em; }
+    article dd { margin-left: 1.5em; margin-bottom: 0.5em; color: var(--fg-secondary); }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Footnotes
+       ═══════════════════════════════════════════════════════════════ */
+    article .footnotes {
+      margin-top: 2em;
+      padding-top: 1em;
+      border-top: 1px solid var(--border);
+      font-size: 0.9em;
+      color: var(--fg-secondary);
+    }
+    article .footnote-ref { font-size: 0.75em; vertical-align: super; }
+    article .footnote-backref { text-decoration: none; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Scroll-sync cursor highlight
+       ═══════════════════════════════════════════════════════════════ */
     .folio-cursor-line {
       background: var(--highlight-bg);
-      border-radius: 4px;
-      transition: background 0.15s ease;
+      border-left: 3px solid var(--highlight-border);
+      padding-left: 0.5em;
+      margin-left: -0.65em;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      transition: background 0.2s ease, border-color 0.2s ease;
     }
 
-    /* Status bar */
+    /* ═══════════════════════════════════════════════════════════════
+       Status bar
+       ═══════════════════════════════════════════════════════════════ */
     #folio-status {
       position: fixed;
       bottom: 0;
       left: 0;
       right: 0;
-      background: var(--code-bg);
+      background: var(--bg);
       border-top: 1px solid var(--border);
-      padding: 0.3rem 1rem;
+      padding: 0.35rem 1rem;
       font-size: 0.75rem;
-      color: var(--muted);
+      color: var(--fg-secondary);
       font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+      z-index: 100;
     }
+    .folio-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--danger);
+      flex-shrink: 0;
+    }
+    .folio-status-dot.connected { background: var(--success); }
 
-    /* Loading / disconnected overlay */
+    /* ═══════════════════════════════════════════════════════════════
+       Disconnected overlay
+       ═══════════════════════════════════════════════════════════════ */
     #folio-overlay {
       display: none;
       position: fixed;
       top: 0; left: 0; right: 0;
-      background: #f59e0b;
-      color: #1a1a1a;
-      text-align: center;
-      padding: 0.4rem;
-      font-size: 0.85rem;
-      z-index: 999;
-    }
-    #folio-overlay.disconnected {
-      display: block;
-      background: #ef4444;
+      background: var(--danger);
       color: white;
+      text-align: center;
+      padding: 0.4rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      z-index: 999;
+      box-shadow: var(--shadow-md);
     }
+    #folio-overlay.disconnected { display: block; }
 
-    /* Mermaid diagram container */
+    /* ═══════════════════════════════════════════════════════════════
+       Mermaid diagrams
+       ═══════════════════════════════════════════════════════════════ */
     .mermaid {
       text-align: center;
-      margin: 1em 0;
+      margin: 1.25em 0;
       overflow-x: auto;
+      background: var(--bg);
+      border: 1px solid var(--code-border);
+      border-radius: var(--radius-lg);
+      padding: 1.5em 1em;
     }
     .mermaid svg {
       max-width: 100%;
       height: auto;
     }
 
-    /* KaTeX overrides */
-    .katex-display { overflow-x: auto; overflow-y: hidden; }
+    /* ═══════════════════════════════════════════════════════════════
+       KaTeX overrides
+       ═══════════════════════════════════════════════════════════════ */
+    .katex-display {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 0.75em 0;
+      margin: 0.5em 0;
+    }
     .katex { font-size: 1.1em; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Details / Summary (HTML passthrough)
+       ═══════════════════════════════════════════════════════════════ */
+    article details {
+      margin-bottom: 1em;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.5em 1em;
+      background: var(--code-bg);
+    }
+    article details[open] { padding-bottom: 0.75em; }
+    article summary {
+      cursor: pointer;
+      font-weight: 600;
+      padding: 0.25em 0;
+      user-select: none;
+    }
+    article summary:hover { color: var(--link); }
+    article details > :not(summary) { margin-top: 0.5em; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Print styles
+       ═══════════════════════════════════════════════════════════════ */
+    @media print {
+      body { padding: 0; max-width: none; }
+      #folio-status, #folio-overlay, .folio-copy-btn { display: none !important; }
+      article pre { break-inside: avoid; }
+      article img { break-inside: avoid; }
+      .folio-cursor-line { background: none; border-left: none; padding-left: 0; margin-left: 0; }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Responsive tweaks
+       ═══════════════════════════════════════════════════════════════ */
+    @media (max-width: 600px) {
+      body { padding: 1rem 0.75rem 3.5rem; }
+      article pre > code { font-size: 0.8em; padding: 0.75em 1em; }
+      article th, article td { padding: 0.4em 0.6em; }
+    }
   </style>
 </head>
 <body>
   <div id="folio-overlay">Disconnected — Neovim session ended.</div>
   <article class="folio-document" id="content">
-    <p style="color: var(--muted);">Waiting for content from Neovim…</p>
+    <p style="color: var(--fg-secondary);">Waiting for content from Neovim…</p>
   </article>
-  <div id="folio-status">folio · disconnected</div>
+  <div id="folio-status">
+    <span class="folio-status-dot" id="folio-dot"></span>
+    <span id="folio-status-text">folio · disconnected</span>
+  </div>
+
+  <!-- Image lightbox -->
+  <div class="folio-lightbox" id="folio-lightbox">
+    <img id="folio-lightbox-img" src="" alt="">
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.21/katex.min.js"></script>
@@ -202,21 +636,39 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.12.0/mermaid.min.js"></script>
   <script>
   (function() {
-    // ── WebSocket connection ────────────────────────────────────
+    // ── SVG icons ──────────────────────────────────────────────────
+    var ICON_COPY = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>';
+    var ICON_CHECK = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
+
+    var ADMONITION_ICONS = {
+      note:      '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>',
+      tip:       '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863.5 8 .5s5.5 1.81 5.5 4.75c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.32-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"/></svg>',
+      important: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>',
+      warning:   '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>',
+      caution:   '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>'
+    };
+
+    // ── WebSocket connection ──────────────────────────────────────
     var bufnr = new URLSearchParams(location.search).get("bufnr") || "1";
     var protocol = location.protocol === "https:" ? "wss:" : "ws:";
     var wsUrl = protocol + "//" + location.host + "/ws/?bufnr=" + bufnr;
     var ws;
     var contentEl = document.getElementById("content");
     var overlayEl = document.getElementById("folio-overlay");
-    var statusEl = document.getElementById("folio-status");
+    var statusTextEl = document.getElementById("folio-status-text");
+    var statusDotEl = document.getElementById("folio-dot");
+    var lightboxEl = document.getElementById("folio-lightbox");
+    var lightboxImg = document.getElementById("folio-lightbox-img");
     var currentScrollLine = null;
+    var reconnectDelay = 1000;
 
     function connect() {
       ws = new WebSocket(wsUrl);
       ws.onopen = function() {
         overlayEl.classList.remove("disconnected");
-        statusEl.textContent = "folio · connected (buf " + bufnr + ")";
+        statusTextEl.textContent = "folio · connected (buf " + bufnr + ")";
+        statusDotEl.classList.add("connected");
+        reconnectDelay = 1000;
       };
       ws.onmessage = function(ev) {
         try {
@@ -228,9 +680,10 @@
       };
       ws.onclose = function() {
         overlayEl.classList.add("disconnected");
-        statusEl.textContent = "folio · disconnected";
-        // Auto-reconnect after 1s.
-        setTimeout(connect, 1000);
+        statusTextEl.textContent = "folio · disconnected";
+        statusDotEl.classList.remove("connected");
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+        setTimeout(connect, reconnectDelay);
       };
       ws.onerror = function() {
         ws.close();
@@ -242,32 +695,7 @@
         case "render":
           if (msg.html) {
             contentEl.innerHTML = msg.html;
-            // Rewrite relative image/src URLs to fetch from the file's directory.
-            rewriteAssetUrls(contentEl);
-            // Apply syntax highlighting to all code blocks.
-            if (typeof hljs !== 'undefined') {
-              contentEl.querySelectorAll('pre code[class*="language-"]').forEach(function(el) {
-                hljs.highlightElement(el);
-              });
-            }
-            // Render Mermaid diagrams before KaTeX (Mermaid may contain math).
-            if (typeof mermaid !== 'undefined') {
-              renderMermaidDiagrams(contentEl);
-            }
-            // Render LaTeX math with KaTeX auto-render.
-            if (typeof renderMathInElement !== 'undefined') {
-              try {
-                renderMathInElement(contentEl, {
-                  delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '$', right: '$', display: false},
-                    {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false}
-                  ],
-                  throwOnError: false
-                });
-              } catch(e) { console.warn('KaTeX render error:', e); }
-            }
+            window.enhanceContent(contentEl);
           }
           if (msg.scroll_to_line) {
             scrollToLine(msg.scroll_to_line);
@@ -281,10 +709,23 @@
       }
     }
 
-    // ── Asset URL rewriting ─────────────────────────────────────
+    // ── Post-render enhancements ─────────────────────────────────
 
+    // Exposed on window so static previews (render-test) can call it on load.
+    window.enhanceContent = function enhanceContent(root) {
+      rewriteAssetUrls(root);
+      addCopyButtons(root);
+      highlightCode(root);
+      processAdmonitions(root);
+      wrapTables(root);
+      markTaskListItems(root);
+      renderMermaidDiagrams(root);
+      renderMath(root);
+      attachImageLightbox(root);
+    }
+
+    // ── Asset URL rewriting ─────────────────────────────────────
     function rewriteAssetUrls(root) {
-      // Images: <img src="images/foo.png"> → <img src="/files/{bufnr}/images/foo.png">
       root.querySelectorAll("img[src]").forEach(function(img) {
         var src = img.getAttribute("src");
         if (src && !/^(https?:|data:|#|\/)/.test(src)) {
@@ -293,21 +734,91 @@
       });
     }
 
-    // ── Mermaid diagram rendering ──────────────────────────────
+    // ── Code copy buttons ───────────────────────────────────────
+    function addCopyButtons(root) {
+      root.querySelectorAll('pre > code').forEach(function(code) {
+        var pre = code.parentElement;
+        if (pre.querySelector('.folio-copy-btn')) return;
+        var btn = document.createElement('button');
+        btn.className = 'folio-copy-btn';
+        btn.title = 'Copy code';
+        btn.innerHTML = ICON_COPY;
+        btn.addEventListener('click', function() {
+          var text = code.textContent;
+          navigator.clipboard.writeText(text).then(function() {
+            btn.innerHTML = ICON_CHECK;
+            btn.classList.add('copied');
+            setTimeout(function() {
+              btn.innerHTML = ICON_COPY;
+              btn.classList.remove('copied');
+            }, 2000);
+          });
+        });
+        pre.appendChild(btn);
+      });
+    }
 
-    // Initialize mermaid once.
+    // ── Syntax highlighting ─────────────────────────────────────
+    function highlightCode(root) {
+      if (typeof hljs === 'undefined') return;
+      root.querySelectorAll('pre code[class*="language-"]').forEach(function(el) {
+        hljs.highlightElement(el);
+      });
+    }
+
+    // ── GitHub-flavored admonitions ─────────────────────────────
+    function processAdmonitions(root) {
+      root.querySelectorAll('blockquote').forEach(function(bq) {
+        var firstP = bq.querySelector('p');
+        if (!firstP) return;
+        var text = firstP.innerHTML;
+        var match = text.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i);
+        if (!match) return;
+        var type = match[1].toLowerCase();
+        bq.classList.add('admonition-' + type);
+        var icon = ADMONITION_ICONS[type] || '';
+        var titleDiv = document.createElement('div');
+        titleDiv.className = 'admonition-title';
+        titleDiv.innerHTML = icon + ' ' + type.charAt(0).toUpperCase() + type.slice(1);
+        // Remove the [!TYPE] prefix from the paragraph.
+        firstP.innerHTML = text.replace(match[0], '');
+        if (firstP.innerHTML.trim() === '') {
+          firstP.remove();
+        }
+        bq.insertBefore(titleDiv, bq.firstChild);
+      });
+    }
+
+    // ── Table wrapper for responsive scroll ─────────────────────
+    function wrapTables(root) {
+      root.querySelectorAll('table').forEach(function(table) {
+        if (table.parentElement.classList.contains('table-wrapper')) return;
+        var wrapper = document.createElement('div');
+        wrapper.className = 'table-wrapper';
+        table.parentElement.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+      });
+    }
+
+    // ── Task list item styling ──────────────────────────────────
+    function markTaskListItems(root) {
+      root.querySelectorAll('li > input[type="checkbox"]').forEach(function(cb) {
+        cb.parentElement.classList.add('task-list-item');
+        cb.setAttribute('disabled', '');
+      });
+    }
+
+    // ── Mermaid diagram rendering ───────────────────────────────
     if (typeof mermaid !== 'undefined') {
       try {
-        mermaid.initialize({ startOnLoad: false, theme: 'default' });
-        // Detect dark mode for mermaid.
-        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-          mermaid.initialize({ startOnLoad: false, theme: 'dark' });
-        }
+        var mermaidTheme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          ? 'dark' : 'default';
+        mermaid.initialize({ startOnLoad: false, theme: mermaidTheme });
       } catch(e) {}
     }
 
     function renderMermaidDiagrams(root) {
-      // Find <pre><code class="language-mermaid"> and transform them.
+      if (typeof mermaid === 'undefined') return;
       var candidates = root.querySelectorAll('pre code[class*="language-mermaid"]');
       if (candidates.length === 0) return;
       var toRender = [];
@@ -319,26 +830,59 @@
         pre.parentElement.replaceChild(div, pre);
         toRender.push(div);
       });
-      // Render all mermaid diagrams at once.
       if (toRender.length > 0) {
         try { mermaid.run({ nodes: toRender }); } catch(e) { console.warn('Mermaid error:', e); }
       }
     }
 
-    // ── Scroll sync: anchor interpolation ──────────────────────
+    // ── KaTeX math rendering ────────────────────────────────────
+    function renderMath(root) {
+      if (typeof renderMathInElement === 'undefined') return;
+      try {
+        renderMathInElement(root, {
+          delimiters: [
+            {left: '$$', right: '$$', display: true},
+            {left: '$', right: '$', display: false},
+            {left: '\\[', right: '\\]', display: true},
+            {left: '\\(', right: '\\)', display: false}
+          ],
+          throwOnError: false
+        });
+      } catch(e) { console.warn('KaTeX render error:', e); }
+    }
+
+    // ── Image lightbox ──────────────────────────────────────────
+    function attachImageLightbox(root) {
+      root.querySelectorAll('img').forEach(function(img) {
+        img.addEventListener('click', function(e) {
+          e.preventDefault();
+          lightboxImg.src = img.src;
+          lightboxEl.classList.add('active');
+        });
+      });
+    }
+    lightboxEl.addEventListener('click', function() {
+      lightboxEl.classList.remove('active');
+      lightboxImg.src = '';
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && lightboxEl.classList.contains('active')) {
+        lightboxEl.classList.remove('active');
+        lightboxImg.src = '';
+      }
+    });
+
+    // ── Scroll sync: anchor interpolation ───────────────────────
 
     function scrollToLine(line) {
       if (line === currentScrollLine) return;
       currentScrollLine = line;
 
-      // Remove previous highlight.
       var prev = contentEl.querySelector(".folio-cursor-line");
       if (prev) prev.classList.remove("folio-cursor-line");
 
-      // Find the element with data-source-line == line.
       var target = contentEl.querySelector('[data-source-line="' + line + '"]');
 
-      // Fallback: walk upward to the nearest block with a data-source-line.
       if (!target) {
         var allBlocks = contentEl.querySelectorAll("[data-source-line]");
         var best = null;
@@ -353,11 +897,8 @@
 
       if (!target) return;
 
-      // Highlight current line's block.
       target.classList.add("folio-cursor-line");
 
-      // Smooth scroll with anchor interpolation.
-      // Find the NEXT block to estimate the pixel range for this line.
       var nextBlock = target.nextElementSibling;
       while (nextBlock && !nextBlock.hasAttribute("data-source-line")) {
         nextBlock = nextBlock.nextElementSibling;
@@ -377,13 +918,11 @@
         }
       }
 
-      // Scroll with a ~10vh top margin so the line isn't at the very edge.
       var margin = window.innerHeight * 0.1;
       window.scrollTo({ top: targetTop - margin, behavior: "smooth" });
     }
 
     // ── Bootstrap ───────────────────────────────────────────────
-
     connect();
   })();
   </script>

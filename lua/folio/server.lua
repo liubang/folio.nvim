@@ -19,23 +19,36 @@ function M.start(callback)
   end
 
   local config = require("folio").config
-  local args = { "-port", tostring(config.port) }
+  local cmd = { config.binary }
+  vim.list_extend(cmd, { "-port", tostring(config.port) })
 
   local port_found = false
+  -- Accumulate stdout data to handle partial chunks.
+  local stdout_buf = ""
 
-  local job_id = vim.fn.jobstart({ config.binary, unpack(args) }, {
-    stdin = "pipe",
+  -- Pre-allocate the server handle so that on_stdout can safely access it.
+  -- (Neovim's event loop guarantees on_stdout fires after this Lua call stack
+  -- unwinds, but placing the assignment before jobstart makes the intent clear.)
+  local handle = { job_id = 0, port = 0 }
+  active_server = handle
+
+  local job_id = vim.fn.jobstart(cmd, {
     on_stdout = function(_, data)
       if port_found then
         return
       end
+      stdout_buf = stdout_buf .. table.concat(data, "\n")
+      local port_str = stdout_buf:match("PORT:(%d+)")
+      if port_str then
+        port_found = true
+        handle.port = tonumber(port_str)
+        callback(handle.port, nil)
+      end
+    end,
+    on_stderr = function(_, data)
       for _, line in ipairs(data) do
-        local port_str = line:match("^PORT:(%d+)$")
-        if port_str then
-          port_found = true
-          active_server.port = tonumber(port_str)
-          callback(active_server.port, nil)
-          return
+        if line ~= "" then
+          vim.notify("[folio] " .. line, vim.log.levels.ERROR)
         end
       end
     end,
@@ -50,12 +63,13 @@ function M.start(callback)
   })
 
   if job_id <= 0 then
+    active_server = nil
     callback(nil, "failed to start folio (is the binary in $PATH?)")
     return
   end
 
-  -- Set job_id IMMEDIATELY — port is 0 until on_stdout fires.
-  active_server = { job_id = job_id, port = 0 }
+  -- Now that we have the real job_id, store it.
+  handle.job_id = job_id
 
   -- Timeout: if the backend doesn't announce a port within 5 seconds, fail.
   vim.defer_fn(function()

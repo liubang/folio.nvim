@@ -39,6 +39,13 @@ import (
 
 // Server is the HTTP + WebSocket sidecar that bridges Neovim (via stdin) and
 // the browser (via WebSocket).
+// connEntry wraps a WebSocket connection with a per-connection write mutex
+// to satisfy gorilla/websocket's "one concurrent writer" requirement.
+type connEntry struct {
+	conn *websocket.Conn
+	wmu  sync.Mutex
+}
+
 type Server struct {
 	port    int
 	httpSrv *http.Server
@@ -46,9 +53,9 @@ type Server struct {
 	renderer *markdown.Renderer
 
 	mu          sync.RWMutex
-	clients     map[int]map[*websocket.Conn]struct{} // bufnr → set of connections
-	lastContent map[int]*protocol.OutgoingMessage     // cached last render per bufnr
-	workDirs    map[int]string                        // bufnr → markdown file directory
+	clients     map[int]map[*connEntry]struct{}    // bufnr → set of connections
+	lastContent map[int]*protocol.OutgoingMessage  // cached last render per bufnr
+	workDirs    map[int]string                     // bufnr → markdown file directory
 
 	shutdownOnce sync.Once
 }
@@ -57,7 +64,7 @@ type Server struct {
 func New(port int) (*Server, error) {
 	s := &Server{
 		renderer:    markdown.NewRenderer(),
-		clients:     make(map[int]map[*websocket.Conn]struct{}),
+		clients:     make(map[int]map[*connEntry]struct{}),
 		lastContent: make(map[int]*protocol.OutgoingMessage),
 		workDirs:    make(map[int]string),
 	}
@@ -126,16 +133,22 @@ var upgrader = websocket.Upgrader{
 }
 
 // parseBufnr extracts the buffer number from a URL path segment or query string.
-func parseBufnr(s string) int {
-	n := 1
-	fmt.Sscanf(s, "%d", &n)
-	return n
+// Returns an error if the input is empty or not a valid integer.
+func parseBufnr(s string) (int, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty bufnr")
+	}
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return 0, fmt.Errorf("invalid bufnr %q: %w", s, err)
+	}
+	return n, nil
 }
 
 // handlePreview serves the single-page HTML that opens a WebSocket connection
 // for live preview.
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, s.staticDir()+"/index.html")
+	http.ServeFile(w, r, filepath.Join(s.staticDir(), "index.html"))
 }
 
 // handleFile serves a local file from the markdown file's directory.
@@ -146,7 +159,11 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing bufnr", http.StatusBadRequest)
 		return
 	}
-	bufnr := parseBufnr(parts[0])
+	bufnr, err := parseBufnr(parts[0])
+	if err != nil {
+		http.Error(w, "invalid bufnr", http.StatusBadRequest)
+		return
+	}
 	relPath := ""
 	if len(parts) > 1 {
 		relPath = parts[1]
@@ -161,9 +178,20 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prevent path traversal: clean and ensure result stays within workDir.
+	// Prevent path traversal: resolve symlinks before checking the prefix
+	// so that a symlink pointing outside workDir is correctly rejected.
+	cleanWork, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	fullPath := filepath.Clean(filepath.Join(workDir, relPath))
-	if !strings.HasPrefix(fullPath, filepath.Clean(workDir)+string(os.PathSeparator)) && fullPath != filepath.Clean(workDir) {
+	evalPath, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !strings.HasPrefix(evalPath, cleanWork+string(os.PathSeparator)) && evalPath != cleanWork {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -180,19 +208,26 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bufnr := parseBufnr(r.URL.Query().Get("bufnr"))
+	bufnr, parseErr := parseBufnr(r.URL.Query().Get("bufnr"))
+	if parseErr != nil {
+		bufnr = 1 // fallback for backward compat
+	}
+
+	entry := &connEntry{conn: conn}
 
 	s.mu.Lock()
 	if s.clients[bufnr] == nil {
-		s.clients[bufnr] = make(map[*websocket.Conn]struct{})
+		s.clients[bufnr] = make(map[*connEntry]struct{})
 	}
-	s.clients[bufnr][conn] = struct{}{}
+	s.clients[bufnr][entry] = struct{}{}
 
 	// Replay the last cached content so the new client sees it immediately.
 	if cached, ok := s.lastContent[bufnr]; ok {
 		if data, err := json.Marshal(cached); err == nil {
+			entry.wmu.Lock()
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			conn.WriteMessage(websocket.TextMessage, data)
+			entry.wmu.Unlock()
 		}
 	}
 	s.mu.Unlock()
@@ -201,7 +236,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer func() {
 			s.mu.Lock()
-			delete(s.clients[bufnr], conn)
+			delete(s.clients[bufnr], entry)
 			s.mu.Unlock()
 			conn.Close()
 		}()
@@ -285,16 +320,35 @@ func (s *Server) broadcast(bufnr int, msg *protocol.OutgoingMessage) {
 		return
 	}
 
+	// Collect the current set of connections under RLock.
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	entries := make([]*connEntry, 0, len(s.clients[bufnr]))
+	for entry := range s.clients[bufnr] {
+		entries = append(entries, entry)
+	}
+	s.mu.RUnlock()
 
-	for conn := range s.clients[bufnr] {
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	// Write to each connection using its per-connection mutex.
+	// Collect failed connections for removal.
+	var failed []*connEntry
+	for _, entry := range entries {
+		entry.wmu.Lock()
+		entry.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := entry.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			log.Printf("folio: write error to client (bufnr=%d): %v", bufnr, err)
-			conn.Close()
-			delete(s.clients[bufnr], conn)
+			entry.conn.Close()
+			failed = append(failed, entry)
 		}
+		entry.wmu.Unlock()
+	}
+
+	// Remove failed connections under a full write lock.
+	if len(failed) > 0 {
+		s.mu.Lock()
+		for _, entry := range failed {
+			delete(s.clients[bufnr], entry)
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -306,11 +360,11 @@ func (s *Server) Shutdown() {
 		defer cancel()
 
 		s.mu.Lock()
-		for _, conns := range s.clients {
-			for conn := range conns {
-				conn.WriteMessage(websocket.CloseMessage,
+		for _, entries := range s.clients {
+			for entry := range entries {
+				entry.conn.WriteMessage(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseGoingAway, "server shutting down"))
-				conn.Close()
+				entry.conn.Close()
 			}
 		}
 		s.mu.Unlock()

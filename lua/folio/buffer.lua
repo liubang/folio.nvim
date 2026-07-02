@@ -14,10 +14,11 @@ do
 end
 
 ---@class folio.BufferState
----@field bufnr          integer
----@field attached       boolean
----@field debounce_timer uv.uv_timer_t | nil
----@field autocmd_ids    integer[]            autocmd IDs for cleanup
+---@field bufnr            integer
+---@field attached         boolean
+---@field content_timer    uv.uv_timer_t | nil   debounce timer for content updates
+---@field cursor_timer     uv.uv_timer_t | nil   debounce timer for cursor updates
+---@field autocmd_ids      integer[]              autocmd IDs for cleanup
 
 ---@type table<integer, folio.BufferState>
 local buffers = {}
@@ -38,6 +39,11 @@ function M.open()
       return
     end
 
+    if not port or port == 0 then
+      vim.notify("[folio] invalid port", vim.log.levels.ERROR)
+      return
+    end
+
     local url = "http://127.0.0.1:" .. port .. "/preview/?bufnr=" .. bufnr
     M._open_browser(url)
     M._attach(bufnr)
@@ -52,6 +58,14 @@ function M.close()
   if vim.tbl_count(buffers) == 0 then
     require("folio.server").stop()
   end
+end
+
+--- close_all detaches all active buffers and stops the sidecar.
+function M.close_all()
+  for bufnr, _ in pairs(buffers) do
+    M._detach(bufnr)
+  end
+  require("folio.server").stop()
 end
 
 --- is_open returns true if the current buffer has an active preview.
@@ -73,9 +87,13 @@ function M._attach(bufnr)
   buffers[bufnr] = state
 
   -- nvim_buf_attach for efficient incremental content tracking.
+  -- Return true from callback to auto-detach when buffer is no longer tracked.
   vim.api.nvim_buf_attach(bufnr, false, {
     on_lines = function()
-      M._debounce(bufnr, function()
+      if not buffers[bufnr] then
+        return true -- detach this callback
+      end
+      M._debounce_content(bufnr, function()
         M._send_content(bufnr)
       end, config.debounce_ms)
     end,
@@ -87,7 +105,7 @@ function M._attach(bufnr)
     group = group,
     buffer = bufnr,
     callback = function()
-      M._debounce(bufnr, function()
+      M._debounce_cursor(bufnr, function()
         M._send_cursor(bufnr)
       end, 50)
     end,
@@ -106,40 +124,71 @@ function M._detach(bufnr)
     return
   end
 
-  -- Cancel pending timer.
-  if state.debounce_timer then
-    state.debounce_timer:stop()
-    state.debounce_timer:close()
-    state.debounce_timer = nil
+  -- Cancel pending content timer.
+  if state.content_timer then
+    state.content_timer:stop()
+    if not state.content_timer:is_closing() then
+      state.content_timer:close()
+    end
+    state.content_timer = nil
   end
 
-  -- Remove cursor-move autocmds.
-  for _, id in ipairs(state.autocmd_ids) do
-    pcall(vim.api.nvim_del_autocmd, id)
+  -- Cancel pending cursor timer.
+  if state.cursor_timer then
+    state.cursor_timer:stop()
+    if not state.cursor_timer:is_closing() then
+      state.cursor_timer:close()
+    end
+    state.cursor_timer = nil
   end
+
+  -- Remove the augroup (also removes all autocmds in it).
+  pcall(vim.api.nvim_del_augroup_by_name, "FolioBuf" .. bufnr)
 
   buffers[bufnr] = nil
 end
 
---- _debounce wraps a callback with a per-buffer debounce timer.
---- Creates the timer once and uses timer:again() to reset it.
+--- _debounce_content wraps a callback with a per-buffer content debounce timer.
 ---@param bufnr   integer
 ---@param callback fun()
 ---@param delay_ms integer
-function M._debounce(bufnr, callback, delay_ms)
+function M._debounce_content(bufnr, callback, delay_ms)
   local state = buffers[bufnr]
   if not state then
     return
   end
 
-  if state.debounce_timer then
-    -- Reuse existing timer — no syscall for create/close.
-    state.debounce_timer:again(delay_ms, 0, function()
+  if state.content_timer then
+    state.content_timer:stop()
+    state.content_timer:start(delay_ms, 0, function()
       vim.schedule(callback)
     end)
   else
-    state.debounce_timer = vim.uv.new_timer()
-    state.debounce_timer:start(delay_ms, 0, function()
+    state.content_timer = vim.uv.new_timer()
+    state.content_timer:start(delay_ms, 0, function()
+      vim.schedule(callback)
+    end)
+  end
+end
+
+--- _debounce_cursor wraps a callback with a per-buffer cursor debounce timer.
+---@param bufnr   integer
+---@param callback fun()
+---@param delay_ms integer
+function M._debounce_cursor(bufnr, callback, delay_ms)
+  local state = buffers[bufnr]
+  if not state then
+    return
+  end
+
+  if state.cursor_timer then
+    state.cursor_timer:stop()
+    state.cursor_timer:start(delay_ms, 0, function()
+      vim.schedule(callback)
+    end)
+  else
+    state.cursor_timer = vim.uv.new_timer()
+    state.cursor_timer:start(delay_ms, 0, function()
       vim.schedule(callback)
     end)
   end
@@ -170,13 +219,17 @@ function M._send_content(bufnr)
     cursor_line = vim.api.nvim_win_get_cursor(winid)[1]
   end
 
-  local msg = encode({
+  local ok, msg = pcall(encode, {
     event = "content_changed",
     bufnr = bufnr,
     content = content,
     cursor_line = cursor_line,
     work_dir = work_dir,
   })
+  if not ok then
+    vim.notify("[folio] JSON encode error: " .. tostring(msg), vim.log.levels.ERROR)
+    return
+  end
 
   M._send(msg)
 end
@@ -189,11 +242,15 @@ function M._send_cursor(bufnr)
     return
   end
   local cursor = vim.api.nvim_win_get_cursor(winid)
-  local msg = encode({
+  local ok, msg = pcall(encode, {
     event = "cursor_moved",
     bufnr = bufnr,
     cursor_line = cursor[1],
   })
+  if not ok then
+    vim.notify("[folio] JSON encode error: " .. tostring(msg), vim.log.levels.ERROR)
+    return
+  end
   M._send(msg)
 end
 
