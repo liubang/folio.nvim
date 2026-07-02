@@ -39,7 +39,7 @@
       --font-mono:     "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
       --font-sans:     -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
       --font-size:     16px;
-      --line-height:   1.75;
+      --line-height:   1.5;
       --content-width: 860px;
     }
 
@@ -114,10 +114,10 @@
        Headings
        ═══════════════════════════════════════════════════════════════ */
     article h1, article h2, article h3, article h4, article h5, article h6 {
-      margin-top: 1.75em;
+      margin-top: 1.5em;
       margin-bottom: 0.5em;
       font-weight: 600;
-      line-height: 1.3;
+      line-height: 1.25;
       letter-spacing: -0.01em;
     }
     article > h1:first-child,
@@ -129,10 +129,11 @@
     article h1 {
       font-size: 2em;
       padding-bottom: 0.3em;
+      border-bottom: 1px solid var(--border);
     }
     article h2 {
       font-size: 1.5em;
-      padding-bottom: 0.25em;
+      padding-bottom: 0.3em;
       border-bottom: 1px solid var(--border);
     }
     article h3 { font-size: 1.25em; }
@@ -147,17 +148,15 @@
     /* ═══════════════════════════════════════════════════════════════
        Paragraph, inline elements
        ═══════════════════════════════════════════════════════════════ */
-    article p { margin-bottom: 1em; }
+    article p { margin-top: 0; margin-bottom: 1em; }
 
     article a {
       color: var(--link);
       text-decoration: none;
-      border-bottom: 1px solid transparent;
-      transition: color 0.2s ease, border-color 0.2s ease;
     }
     article a:hover {
       color: var(--link-hover);
-      border-bottom-color: var(--link-hover);
+      text-decoration: underline;
     }
 
     article strong { font-weight: 600; }
@@ -175,15 +174,17 @@
     article sup, article sub { font-size: 0.75em; }
     article kbd {
       display: inline-block;
-      padding: 0.1em 0.4em;
+      padding: 3px 5px;
       font-family: var(--font-mono);
       font-size: 0.8em;
-      line-height: 1;
+      line-height: 10px;
       color: var(--fg);
-      background: var(--code-bg);
+      vertical-align: middle;
+      background-color: var(--code-bg);
       border: 1px solid var(--border-heavy);
-      border-bottom-width: 2px;
-      border-radius: 3px;
+      border-bottom-color: var(--border-heavy);
+      border-radius: 6px;
+      box-shadow: inset 0 -1px 0 var(--border-heavy);
     }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -194,7 +195,6 @@
       font-size: 0.85em;
       padding: 0.2em 0.4em;
       background: var(--code-bg);
-      border: 1px solid var(--code-border);
       border-radius: var(--radius);
       word-break: break-word;
     }
@@ -205,26 +205,24 @@
     article pre {
       position: relative;
       background: var(--code-bg);
-      border: 1px solid var(--code-border);
-      border-radius: var(--radius-lg);
-      margin-bottom: 1.25em;
+      margin-bottom: 1em;
       overflow: hidden;
       min-height: 2.5em;
     }
     article pre > code {
       display: block;
-      padding: 1em 1.25em;
+      padding: 16px;
       overflow-x: auto;
       font-family: var(--font-mono);
       font-size: 0.85em;
-      line-height: 1.6;
+      line-height: 1.45;
       tab-size: 4;
       -moz-tab-size: 4;
     }
     /* Override hljs background */
     article pre > code.hljs {
       background: transparent;
-      padding: 1em 1.25em;
+      padding: 16px;
     }
 
     /* Language badge */
@@ -238,7 +236,6 @@
       font-family: var(--font-mono);
       color: var(--fg-secondary);
       background: var(--code-bg);
-      border-bottom-left-radius: var(--radius);
       border-left: 1px solid var(--code-border);
       border-bottom: 1px solid var(--code-border);
       text-transform: uppercase;
@@ -286,28 +283,23 @@
        Blockquotes & admonitions
        ═══════════════════════════════════════════════════════════════ */
     article blockquote {
-      margin-bottom: 1.25em;
-      padding: 0.75em 1em;
-      border-left: 4px solid var(--border-heavy);
-      color: var(--fg);
-      background: var(--code-bg);
-      border-radius: 0 var(--radius) var(--radius) 0;
+      margin-bottom: 1em;
+      padding: 0 1em;
+      border-left: .25em solid var(--border-heavy);
+      color: var(--fg-secondary);
     }
     article blockquote > :last-child { margin-bottom: 0; }
     article blockquote blockquote {
       margin-top: 0.5em;
-      background: rgba(0,0,0,0.03);
-    }
-    @media (prefers-color-scheme: dark) {
-      article blockquote blockquote { background: rgba(255,255,255,0.03); }
+      color: var(--fg-secondary);
     }
 
     /* GitHub-flavored admonitions: > [!NOTE], > [!WARNING], etc. */
-    article blockquote.admonition-note    { border-left-color: var(--info);    background: rgba(9, 105, 218, 0.06); }
-    article blockquote.admonition-tip     { border-left-color: var(--success); background: rgba(26, 127, 55, 0.06); }
-    article blockquote.admonition-important { border-left-color: var(--note); background: rgba(110, 64, 201, 0.06); }
-    article blockquote.admonition-warning { border-left-color: var(--warning); background: rgba(154, 103, 0, 0.06); }
-    article blockquote.admonition-caution { border-left-color: var(--danger);  background: rgba(209, 36, 47, 0.06); }
+    article blockquote.admonition-note    { border-left-color: var(--info);    background: rgba(9, 105, 218, 0.06); color: var(--fg); }
+    article blockquote.admonition-tip     { border-left-color: var(--success); background: rgba(26, 127, 55, 0.06); color: var(--fg); }
+    article blockquote.admonition-important { border-left-color: var(--note); background: rgba(110, 64, 201, 0.06); color: var(--fg); }
+    article blockquote.admonition-warning { border-left-color: var(--warning); background: rgba(154, 103, 0, 0.06); color: var(--fg); }
+    article blockquote.admonition-caution { border-left-color: var(--danger);  background: rgba(209, 36, 47, 0.06); color: var(--fg); }
     @media (prefers-color-scheme: dark) {
       article blockquote.admonition-note    { background: rgba(88, 166, 255, 0.08); }
       article blockquote.admonition-tip     { background: rgba(63, 185, 80, 0.08); }
@@ -348,14 +340,14 @@
       margin-left: -1.5em;
     }
     article li.task-list-item > input[type="checkbox"] {
+      margin: 0 .2em .25em -1.6em;
+      vertical-align: middle;
       appearance: none;
       -webkit-appearance: none;
       width: 1em;
       height: 1em;
       border: 2px solid var(--border-heavy);
       border-radius: 3px;
-      margin-right: 0.4em;
-      vertical-align: -0.15em;
       cursor: default;
       position: relative;
     }
@@ -380,34 +372,28 @@
        ═══════════════════════════════════════════════════════════════ */
     article .table-wrapper {
       overflow-x: auto;
-      margin-bottom: 1.25em;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
+      margin-bottom: 1em;
     }
     article table {
       border-collapse: collapse;
       width: 100%;
       margin-bottom: 0;
-      font-size: 0.9em;
     }
     article th, article td {
-      padding: 0.6em 1em;
+      padding: 6px 13px;
       text-align: left;
-      border-bottom: 1px solid var(--border);
+      border: 1px solid var(--border);
     }
     article th {
       font-weight: 600;
       background: var(--code-bg);
       white-space: nowrap;
     }
-    article tr:last-child td { border-bottom: none; }
     article tbody tr:nth-child(even) { background: var(--table-row-alt); }
     article tbody tr:hover { background: var(--table-hover); }
     /* Standalone tables (no wrapper) */
     article > table {
-      margin-bottom: 1.25em;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
+      margin-bottom: 1em;
       overflow: hidden;
     }
 
@@ -417,7 +403,6 @@
     article img {
       max-width: 100%;
       height: auto;
-      border-radius: var(--radius);
       transition: box-shadow 0.2s;
     }
     /* Standalone images: block-level, centered, with spacing and zoom cursor */
@@ -462,10 +447,11 @@
        Horizontal rule
        ═══════════════════════════════════════════════════════════════ */
     article hr {
-      border: none;
-      height: 1px;
-      background: var(--border);
-      margin: 2em 0;
+      border: 0;
+      height: .25em;
+      padding: 0;
+      margin: 24px 0;
+      background-color: var(--border);
     }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -555,7 +541,6 @@
       overflow-x: auto;
       background: var(--bg);
       border: 1px solid var(--code-border);
-      border-radius: var(--radius-lg);
       padding: 1.5em 1em;
     }
     .mermaid svg {
@@ -694,6 +679,7 @@
       switch (msg.type) {
         case "render":
           if (msg.html) {
+            currentScrollLine = null;  // reset — DOM is about to be replaced
             contentEl.innerHTML = msg.html;
             window.enhanceContent(contentEl);
           }
@@ -892,6 +878,10 @@
             best = { el: allBlocks[i], l: l };
           }
         }
+        // Fallback: if no block precedes the target line, use the first block.
+        if (!best && allBlocks.length > 0) {
+          best = { el: allBlocks[0], l: parseInt(allBlocks[0].getAttribute("data-source-line"), 10) };
+        }
         target = best ? best.el : null;
       }
 
@@ -899,27 +889,13 @@
 
       target.classList.add("folio-cursor-line");
 
-      var nextBlock = target.nextElementSibling;
-      while (nextBlock && !nextBlock.hasAttribute("data-source-line")) {
-        nextBlock = nextBlock.nextElementSibling;
-      }
-
-      var targetTop = target.getBoundingClientRect().top + window.scrollY;
-      if (nextBlock) {
-        var nextTop = nextBlock.getBoundingClientRect().top + window.scrollY;
-        var nextLine = parseInt(nextBlock.getAttribute("data-source-line"), 10);
-        var totalSrcLines = nextLine - parseInt(target.getAttribute("data-source-line"), 10);
-        var pixelSpan = nextTop - targetTop;
-
-        if (totalSrcLines > 0 && pixelSpan > 0) {
-          var offsetLines = line - parseInt(target.getAttribute("data-source-line"), 10);
-          var ratio = offsetLines / totalSrcLines;
-          targetTop += pixelSpan * ratio;
-        }
-      }
-
+      // Compute the absolute position of the target within the document and
+      // scroll there directly.  Using element position + pageYOffset is more
+      // reliable than scrollIntoView, especially for large scroll distances.
+      var rect = target.getBoundingClientRect();
+      var targetTop = rect.top + window.pageYOffset;
       var margin = window.innerHeight * 0.1;
-      window.scrollTo({ top: targetTop - margin, behavior: "smooth" });
+      window.scrollTo(0, Math.max(0, targetTop - margin));
     }
 
     // ── Bootstrap ───────────────────────────────────────────────
