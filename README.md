@@ -4,19 +4,33 @@ A high-performance, browser-level Markdown live preview plugin for Neovim.
 
 Powered by a **Go sidecar** that parses Markdown and pushes rendered HTML to your
 browser over WebSocket. The Lua plugin stays lean — no regex, no parsing, no
-CPU-heavy work on the Neovim main thread.
+CPU-heavy work on the Neovim main thread. Styling is closely aligned with
+**GitHub's Markdown rendering** for a familiar, polished look.
 
 ## Features
 
-- **Native browser rendering** — full CSS layout, smooth scrolling, dark mode
-- **Scroll sync** — cursor movement in Neovim scrolls the browser preview
-  accurately via `data-source-line` anchor interpolation
-- **Near-zero main-thread cost** — Markdown parsing and HTML generation run in a
-  Go sidecar process, off the Neovim event loop
+- **GitHub-style rendering** — headings, code blocks, tables, blockquotes,
+  task lists, and admonitions all match GitHub's look and feel
+- **Syntax highlighting** — code blocks are highlighted with
+  [highlight.js](https://highlightjs.org/) (light + dark themes)
+- **Math support** — inline and display math via
+  [KaTeX](https://katex.org/)
+- **Diagram support** — [Mermaid](https://mermaid.js.org/) diagrams rendered
+  client-side
+- **Admonitions** — GitHub-flavored `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`,
+  `> [!IMPORTANT]`, `> [!CAUTION]` blockquotes with colored icons
+- **Image lightbox** — click images to view full-size in an overlay
+- **Code copy buttons** — hover over any code block to copy its contents
+- **Scroll sync** — cursor movement in Neovim highlights and scrolls the
+  browser preview via `data-source-line` anchor interpolation
+- **Live reload** — buffer changes are pushed instantly (debounced) to the
+  browser; no manual refresh needed
+- **Dark mode** — auto-detects your OS `prefers-color-scheme` setting
 - **Multi-buffer** — each Neovim buffer gets its own browser tab
-- **Graceful shutdown** — the Go process exits when Neovim closes the stdin pipe;
-  no zombie processes
-- **Auto light/dark theme** — follows your OS `prefers-color-scheme` setting
+- **Off-main-thread** — Markdown parsing and HTML generation run in a Go
+  sidecar process; Neovim stays responsive
+- **Graceful shutdown** — the Go process exits when Neovim closes stdin; no
+  zombie processes
 
 ## Requirements
 
@@ -36,9 +50,9 @@ CPU-heavy work on the Neovim main thread.
   build = "make build",
   config = function()
     require("folio").setup({
-      -- port = 0,           -- auto-assign TCP port (default)
-      -- debounce_ms = 150,  -- debounce interval for content sync
-      -- auto_start = false, -- set true to auto-open preview for .md files
+      -- port = 0,           -- TCP port (0 = auto-assign)
+      -- debounce_ms = 150,  -- content sync debounce in ms
+      -- auto_start = false, -- auto-open preview for markdown buffers
       -- filetypes = { "markdown" },
     })
   end,
@@ -48,12 +62,55 @@ CPU-heavy work on the Neovim main thread.
 }
 ```
 
+### rocks.nvim
+
+```lua
+{
+  "liubang/folio.nvim",
+  config = function()
+    require("folio").setup()
+  end,
+}
+```
+
 ## Commands
 
-| Command         | Description                                |
-| --------------- | ------------------------------------------ |
-| `:FolioPreview` | Open the Markdown preview in a browser tab |
-| `:FolioClose`   | Close the preview for the current buffer   |
+| Command           | Description                                |
+| ----------------- | ------------------------------------------ |
+| `:FolioPreview`   | Open the Markdown preview in a browser tab |
+| `:FolioClose`     | Close the preview for the current buffer   |
+
+## API
+
+```lua
+-- Programmatic control
+require("folio").open()       -- start preview for current buffer
+require("folio").close()      -- stop preview for current buffer
+require("folio").is_open()    -- returns true if preview is active
+```
+
+## Configuration
+
+```lua
+require("folio").setup({
+  -- TCP port for the Go sidecar.  0 = auto-assign from the OS.
+  port = 0,
+
+  -- Debounce interval (milliseconds) for content synchronization.
+  -- Lower values make preview updates more responsive but increase CPU usage.
+  debounce_ms = 150,
+
+  -- Path to the compiled Go binary.
+  -- Defaults to <plugin-dir>/build/folio.
+  binary = nil,
+
+  -- Automatically open the preview when entering a markdown buffer.
+  auto_start = false,
+
+  -- Filetypes that folio treats as markdown.
+  filetypes = { "markdown" },
+})
+```
 
 ## How It Works
 
@@ -65,12 +122,14 @@ CPU-heavy work on the Neovim main thread.
 ```
 
 1. The Lua plugin listens to buffer changes (`nvim_buf_attach`) and cursor
-   movements.
+   movements (`CursorMoved` / `CursorMovedI`).
 2. Events are serialized as JSON and written to the Go sidecar's stdin.
-3. The Go sidecar parses the Markdown with a custom Goldmark renderer that
-   injects `data-source-line` attributes into block-level HTML elements.
-4. The rendered HTML is broadcast to connected browsers over WebSocket.
-5. The browser's JavaScript highlights the current line and scrolls smoothly.
+3. The Go sidecar parses Markdown with a custom
+   [Goldmark](https://github.com/yuin/goldmark) renderer that injects
+   `data-source-line` attributes into every block-level HTML element.
+4. Rendered HTML is broadcast to connected browsers over WebSocket.
+5. The browser's JavaScript highlights the cursor line and scrolls the
+   preview to keep it in sync with Neovim.
 
 ## Development
 
@@ -82,11 +141,14 @@ cd folio.nvim
 # Build the Go backend
 make build
 
-# Run locally for testing
+# Start the sidecar manually (useful for debugging)
 make run
 
 # Cross-compile for all platforms
 make build-all
+
+# Run tests
+go test ./...
 ```
 
 For local development with Neovim, point lazy.nvim at your checkout:
