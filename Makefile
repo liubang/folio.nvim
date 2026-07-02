@@ -1,4 +1,4 @@
-.PHONY: build build-all clean run fmt lint
+.PHONY: build build-all clean run fmt lint test test-race bench
 
 BINARY := folio
 BUILD_DIR := build
@@ -34,6 +34,18 @@ fmt:
 # Lint Go source code (requires golangci-lint).
 lint:
 	golangci-lint run ./...
+
+# Run all Go tests.
+test:
+	go test -count=1 -timeout 60s ./...
+
+# Run all Go tests with race detector.
+test-race:
+	go test -race -count=1 -timeout 60s ./...
+
+# Run benchmarks.
+bench:
+	go test -bench=. -benchtime=3s -count=1 ./internal/markdown/...
 
 # Format Lua source.
 fmt-lua:
