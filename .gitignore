@@ -1,8 +1,10 @@
 # Build artifacts
 build/
 
-# Go
-vendor/
+# Go module vendor directory (NOT frontend/vendor/, which is vendored
+# third-party JS/CSS and is required by go:embed).
+/vendor/
+!frontend/vendor/
 
 # IDE
 .idea/

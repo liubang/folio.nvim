@@ -214,3 +214,42 @@ func TestList_Rendering(t *testing.T) {
 		t.Errorf("expected <ul>, got:\n%s", html)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GFM tables must carry a data-source-line attribute so scroll-sync works
+// when the cursor is inside a table.
+// ---------------------------------------------------------------------------
+
+func TestTable_SourceLine(t *testing.T) {
+	r := NewRenderer()
+	src := "| A | B |\n|---|---|\n| 1 | 2 |\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+	if !strings.Contains(html, "<table") {
+		t.Errorf("expected <table>, got:\n%s", html)
+	}
+	if !strings.Contains(html, `data-source-line="1"`) {
+		t.Errorf("expected table to have data-source-line=1, got:\n%s", html)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: nodeStartLine must not recurse into inline nodes, whose Lines()
+// panics inside goldmark. A table whose cells contain inline markup (links,
+// emphasis) exercises this path.
+// ---------------------------------------------------------------------------
+
+func TestTable_WithInlineMarkup_NoPanic(t *testing.T) {
+	r := NewRenderer()
+	src := "| A | B |\n|---|---|\n| **bold** | [link](http://x) |\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	if !strings.Contains(string(out), "<table") {
+		t.Fatalf("expected <table> in output")
+	}
+}
