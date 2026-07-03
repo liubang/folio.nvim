@@ -48,10 +48,16 @@ func main() {
 
 	go func() {
 		<-sigCh
+		// Gracefully close the HTTP server and WebSocket clients. We then
+		// exit explicitly: RunStdinLoop blocks on stdin (a TTY read when
+		// run manually), and closing os.Stdin from another goroutine does
+		// not reliably interrupt a blocked read on all platforms, so the
+		// process might otherwise hang after Shutdown completes.
 		srv.Shutdown()
+		os.Exit(0)
 	}()
 
 	// Block on stdin — when Neovim exits or the pipe breaks, we self-terminate.
 	srv.RunStdinLoop()
-	srv.Shutdown()
+	srv.Shutdown() // idempotent (shutdownOnce)
 }
