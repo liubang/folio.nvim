@@ -145,6 +145,9 @@ function M._detach(bufnr)
   -- Remove the augroup (also removes all autocmds in it).
   pcall(vim.api.nvim_del_augroup_by_name, "FolioBuf" .. bufnr)
 
+  -- Notify the sidecar to release cached state for this buffer.
+  M._send_buffer_closed(bufnr)
+
   buffers[bufnr] = nil
 end
 
@@ -267,6 +270,19 @@ function M._send(msg)
   if ok == 0 then
     vim.notify("[folio] chansend FAILED for job_id=" .. job_id, vim.log.levels.ERROR)
   end
+end
+
+--- _send_buffer_closed notifies the Go sidecar to release state for a buffer.
+---@param bufnr integer
+function M._send_buffer_closed(bufnr)
+  local ok, msg = pcall(encode, {
+    event = "buffer_closed",
+    bufnr = bufnr,
+  })
+  if not ok then
+    return
+  end
+  M._send(msg)
 end
 
 --- _open_browser opens the given URL in the system browser.

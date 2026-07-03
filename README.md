@@ -29,6 +29,12 @@ CPU-heavy work on the Neovim main thread. Styling is closely aligned with
 - **Multi-buffer** — each Neovim buffer gets its own browser tab
 - **Off-main-thread** — Markdown parsing and HTML generation run in a Go
   sidecar process; Neovim stays responsive
+- **Self-contained & offline** — the frontend (HTML, CSS, highlight.js, KaTeX,
+  Mermaid, DOMPurify) is embedded into the Go binary via `go:embed`; no CDN
+  dependency, works fully offline
+- **Safe HTML rendering** — untrusted markdown HTML is sanitized with
+  [DOMPurify](https://github.com/cure53/DOMPurify) before injection, so raw
+  `<script>` / inline event handlers cannot execute
 - **Graceful shutdown** — the Go process exits when Neovim closes stdin; no
   zombie processes
 
@@ -46,7 +52,7 @@ CPU-heavy work on the Neovim main thread. Styling is closely aligned with
 ```lua
 {
   "liubang/folio.nvim",
-  cmd = { "FolioPreview", "FolioClose" },
+  cmd = { "FolioPreview", "FolioClose", "FolioCloseAll" },
   build = "make build",
   config = function()
     require("folio").setup({
@@ -79,6 +85,7 @@ CPU-heavy work on the Neovim main thread. Styling is closely aligned with
 | ----------------- | ------------------------------------------ |
 | `:FolioPreview`   | Open the Markdown preview in a browser tab |
 | `:FolioClose`     | Close the preview for the current buffer   |
+| `:FolioCloseAll`  | Close all Markdown previews                |
 
 ## API
 
@@ -86,6 +93,7 @@ CPU-heavy work on the Neovim main thread. Styling is closely aligned with
 -- Programmatic control
 require("folio").open()       -- start preview for current buffer
 require("folio").close()      -- stop preview for current buffer
+require("folio").close_all()  -- stop preview for all buffers
 require("folio").is_open()    -- returns true if preview is active
 ```
 
@@ -128,8 +136,10 @@ require("folio").setup({
    [Goldmark](https://github.com/yuin/goldmark) renderer that injects
    `data-source-line` attributes into every block-level HTML element.
 4. Rendered HTML is broadcast to connected browsers over WebSocket.
-5. The browser's JavaScript highlights the cursor line and scrolls the
-   preview to keep it in sync with Neovim.
+5. The browser's JavaScript sanitizes the HTML with DOMPurify, then highlights
+   the cursor line and scrolls the preview to keep it in sync with Neovim.
+   The frontend itself is served from assets embedded in the binary, so no
+   external files or CDN requests are needed.
 
 ## Development
 

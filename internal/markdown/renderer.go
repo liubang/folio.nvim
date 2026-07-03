@@ -25,6 +25,7 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	extAST "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/renderer"
 	ghtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/util"
@@ -110,20 +111,44 @@ func (r *SourceLineRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegister
 	reg.Register(ast.KindList, r.renderList)
 	reg.Register(ast.KindBlockquote, r.renderBlockquote)
 	reg.Register(ast.KindThematicBreak, r.renderThematicBreak)
+	reg.Register(extAST.KindTable, r.renderTable)
 }
 
-// sourceLineAttr computes the 1-based source line number from the block node's
-// first line segment and returns a data-source-line="N" attribute string.
-// It uses the pre-computed lineIndex stored in the node's owner document to
-// achieve O(log n) lookup per call.
-func (r *SourceLineRenderer) sourceLineAttr(source []byte, node ast.Node, idx *lineIndex) string {
-	lines := node.Lines()
-	if lines == nil || lines.Len() == 0 {
+// sourceLineAttr computes the 1-based source line number of the block node
+// and returns a data-source-line="N" attribute string. It uses the
+// pre-computed lineIndex stored in the node's owner document to achieve
+// O(log n) lookup per call. Returns an empty string if the node carries no
+// source position (e.g. a synthetic container with no line-bearing descendant).
+func (r *SourceLineRenderer) sourceLineAttr(node ast.Node, idx *lineIndex) string {
+	line := r.nodeStartLine(node, idx)
+	if line <= 0 {
 		return ""
 	}
-	seg := lines.At(0)
-	line := idx.lineAt(seg.Start)
 	return fmt.Sprintf(` data-source-line="%d"`, line)
+}
+
+// nodeStartLine returns the 1-based source line of a block node. Container
+// nodes such as GFM tables carry no line segments of their own (the segments
+// live on their children), so we fall back to the first descendant that has a
+// line segment. This keeps scroll-sync working when the cursor is inside a
+// table or any other container that does not own its lines.
+//
+// Only block nodes are descended into: calling Lines() on an inline node
+// panics inside goldmark ("can not call with inline nodes"), so we stop at
+// inline children rather than recursing through them.
+func (r *SourceLineRenderer) nodeStartLine(node ast.Node, idx *lineIndex) int {
+	if node.Type() == ast.TypeInline {
+		return 0
+	}
+	if lines := node.Lines(); lines != nil && lines.Len() > 0 {
+		return idx.lineAt(lines.At(0).Start)
+	}
+	for c := node.FirstChild(); c != nil; c = c.NextSibling() {
+		if line := r.nodeStartLine(c, idx); line > 0 {
+			return line
+		}
+	}
+	return 0
 }
 
 func (r *SourceLineRenderer) renderDocument(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -142,7 +167,7 @@ func (r *SourceLineRenderer) renderDocument(w util.BufWriter, source []byte, nod
 func (r *SourceLineRenderer) renderHeading(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	n := node.(*ast.Heading)
 	if entering {
-		fmt.Fprintf(w, "<h%d%s>", n.Level, r.sourceLineAttr(source, node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<h%d%s>", n.Level, r.sourceLineAttr(node, r.getLineIndex(node)))
 	} else {
 		fmt.Fprintf(w, "</h%d>\n", n.Level)
 	}
@@ -152,7 +177,7 @@ func (r *SourceLineRenderer) renderHeading(w util.BufWriter, source []byte, node
 func (r *SourceLineRenderer) renderParagraph(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
 		w.WriteString("<p")
-		w.WriteString(r.sourceLineAttr(source, node, r.getLineIndex(node)))
+		w.WriteString(r.sourceLineAttr(node, r.getLineIndex(node)))
 		w.WriteString(">")
 	} else {
 		w.WriteString("</p>\n")
@@ -163,7 +188,7 @@ func (r *SourceLineRenderer) renderParagraph(w util.BufWriter, source []byte, no
 func (r *SourceLineRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
 		w.WriteString("<pre")
-		w.WriteString(r.sourceLineAttr(source, node, r.getLineIndex(node)))
+		w.WriteString(r.sourceLineAttr(node, r.getLineIndex(node)))
 		w.WriteString("><code>")
 		r.writeCodeLines(w, source, node)
 		w.WriteString("</code></pre>\n")
@@ -176,7 +201,7 @@ func (r *SourceLineRenderer) renderFencedCodeBlock(w util.BufWriter, source []by
 	n := node.(*ast.FencedCodeBlock)
 	if entering {
 		w.WriteString("<pre")
-		w.WriteString(r.sourceLineAttr(source, node, r.getLineIndex(node)))
+		w.WriteString(r.sourceLineAttr(node, r.getLineIndex(node)))
 		w.WriteString("><code")
 		lang := n.Language(source)
 		if lang != nil {
@@ -198,7 +223,7 @@ func (r *SourceLineRenderer) renderList(w util.BufWriter, source []byte, node as
 		tag = "ol"
 	}
 	if entering {
-		fmt.Fprintf(w, "<%s%s>\n", tag, r.sourceLineAttr(source, node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<%s%s>\n", tag, r.sourceLineAttr(node, r.getLineIndex(node)))
 	} else {
 		fmt.Fprintf(w, "</%s>\n", tag)
 	}
@@ -207,7 +232,7 @@ func (r *SourceLineRenderer) renderList(w util.BufWriter, source []byte, node as
 
 func (r *SourceLineRenderer) renderBlockquote(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
-		fmt.Fprintf(w, "<blockquote%s>\n", r.sourceLineAttr(source, node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<blockquote%s>\n", r.sourceLineAttr(node, r.getLineIndex(node)))
 	} else {
 		w.WriteString("</blockquote>\n")
 	}
@@ -218,7 +243,20 @@ func (r *SourceLineRenderer) renderThematicBreak(w util.BufWriter, source []byte
 	if !entering {
 		return ast.WalkContinue, nil
 	}
-	fmt.Fprintf(w, "<hr%s />\n", r.sourceLineAttr(source, node, r.getLineIndex(node)))
+	fmt.Fprintf(w, "<hr%s />\n", r.sourceLineAttr(node, r.getLineIndex(node)))
+	return ast.WalkContinue, nil
+}
+
+// renderTable wraps the GFM table node with a data-source-line attribute so
+// cursor scroll-sync keeps working when the cursor is inside a table. The
+// inner thead/tbody/tr/td nodes are still rendered by goldmark's default
+// HTML renderer (we only override the Table kind itself).
+func (r *SourceLineRenderer) renderTable(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		fmt.Fprintf(w, "<table%s>\n", r.sourceLineAttr(node, r.getLineIndex(node)))
+	} else {
+		w.WriteString("</table>\n")
+	}
 	return ast.WalkContinue, nil
 }
 

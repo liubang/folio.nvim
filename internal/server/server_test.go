@@ -314,6 +314,48 @@ func TestHandleContentChanged_BroadcastsHTML(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// handleBufferClosed releases all server-side state for a buffer.
+// ---------------------------------------------------------------------------
+
+func TestHandleBufferClosed_ReleasesState(t *testing.T) {
+	srv := newTestServer(t)
+	bufnr := 42
+
+	// Seed cached content, a work dir, and a connected client.
+	srv.mu.Lock()
+	srv.lastContent[bufnr] = &protocol.OutgoingMessage{
+		Type: protocol.TypeRender, Bufnr: bufnr, HTML: "<p>x</p>",
+	}
+	srv.workDirs[bufnr] = t.TempDir()
+	srv.mu.Unlock()
+
+	conn := dialWS(t, wsURL(srv, bufnr))
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	srv.handleBufferClosed(&protocol.IncomingMessage{
+		Event: protocol.EventBufferClosed,
+		Bufnr: bufnr,
+	})
+
+	srv.mu.RLock()
+	_, hasClients := srv.clients[bufnr]
+	_, hasContent := srv.lastContent[bufnr]
+	_, hasDir := srv.workDirs[bufnr]
+	srv.mu.RUnlock()
+
+	if hasClients {
+		t.Errorf("expected clients[%d] to be cleared", bufnr)
+	}
+	if hasContent {
+		t.Errorf("expected lastContent[%d] to be cleared", bufnr)
+	}
+	if hasDir {
+		t.Errorf("expected workDirs[%d] to be cleared", bufnr)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // handlePreview uses filepath.Join (not string concat).
 // ---------------------------------------------------------------------------
 

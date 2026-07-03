@@ -29,7 +29,7 @@ function M.start(callback)
   -- Pre-allocate the server handle so that on_stdout can safely access it.
   -- (Neovim's event loop guarantees on_stdout fires after this Lua call stack
   -- unwinds, but placing the assignment before jobstart makes the intent clear.)
-  local handle = { job_id = 0, port = 0 }
+  local handle = { job_id = nil, port = 0 }
   active_server = handle
 
   local job_id = vim.fn.jobstart(cmd, {
@@ -98,7 +98,9 @@ end
 --- is_running returns true if the sidecar is alive.
 ---@return boolean
 function M.is_running()
-  return active_server ~= nil and active_server.job_id ~= nil
+  return active_server ~= nil
+    and active_server.job_id ~= nil
+    and active_server.job_id > 0
 end
 
 --- _raw_job_id returns the vim job id for chansend, or nil.

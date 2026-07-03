@@ -30,6 +30,7 @@ type IncomingMessage struct {
 const (
 	EventContentChanged = "content_changed"
 	EventCursorMoved    = "cursor_moved"
+	EventBufferClosed   = "buffer_closed"
 )
 
 // OutgoingMessage is the JSON envelope broadcast to browsers over WebSocket.

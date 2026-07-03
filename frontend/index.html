@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>folio preview</title>
   <!-- KaTeX for LaTeX math -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.21/katex.min.css">
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <!-- Syntax highlight themes -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/vendor/highlight.js/github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="/vendor/highlight.js/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <style>
     /* ═══════════════════════════════════════════════════════════════
        Design tokens
@@ -195,6 +195,7 @@
       font-size: 0.85em;
       padding: 0.2em 0.4em;
       background: var(--code-bg);
+      border: 1px solid var(--border);
       border-radius: var(--radius);
       word-break: break-word;
     }
@@ -208,6 +209,8 @@
       margin-bottom: 1em;
       overflow: hidden;
       min-height: 2.5em;
+      border: 1px solid var(--code-border);
+      border-radius: var(--radius);
     }
     article pre > code {
       display: block;
@@ -391,10 +394,12 @@
     }
     article tbody tr:nth-child(even) { background: var(--table-row-alt); }
     article tbody tr:hover { background: var(--table-hover); }
-    /* Standalone tables (no wrapper) */
+    /* Standalone tables (no wrapper) — act as a scroll fallback so wide
+       tables don't break layout if the JS wrapper step failed to run. */
     article > table {
       margin-bottom: 1em;
-      overflow: hidden;
+      overflow-x: auto;
+      display: block;
     }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -615,10 +620,11 @@
     <img id="folio-lightbox-img" src="" alt="">
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.21/katex.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.21/contrib/auto-render.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.12.0/mermaid.min.js"></script>
+  <script src="/vendor/highlight.js/highlight.min.js"></script>
+  <script src="/vendor/katex/katex.min.js"></script>
+  <script src="/vendor/katex/auto-render.min.js"></script>
+  <script src="/vendor/mermaid/mermaid.min.js"></script>
+  <script src="/vendor/purify.min.js"></script>
   <script>
   (function() {
     // ── SVG icons ──────────────────────────────────────────────────
@@ -680,7 +686,15 @@
         case "render":
           if (msg.html) {
             currentScrollLine = null;  // reset — DOM is about to be replaced
-            contentEl.innerHTML = msg.html;
+            // Sanitize untrusted markdown HTML before injection. goldmark
+            // runs with WithUnsafe() (to allow e.g. <details>), so raw
+            // <script> / on* handlers could otherwise execute in the
+            // browser. DOMPurify strips those while preserving
+            // data-source-line and normal HTML.
+            var safeHtml = (typeof DOMPurify !== 'undefined')
+              ? DOMPurify.sanitize(msg.html)
+              : msg.html;
+            contentEl.innerHTML = safeHtml;
             window.enhanceContent(contentEl);
           }
           if (msg.scroll_to_line) {
@@ -699,15 +713,17 @@
 
     // Exposed on window so static previews (render-test) can call it on load.
     window.enhanceContent = function enhanceContent(root) {
-      rewriteAssetUrls(root);
-      addCopyButtons(root);
-      highlightCode(root);
-      processAdmonitions(root);
-      wrapTables(root);
-      markTaskListItems(root);
-      renderMermaidDiagrams(root);
-      renderMath(root);
-      attachImageLightbox(root);
+      // Each enhancement runs independently so a failure in one (e.g. a
+      // malformed Mermaid block) cannot prevent the rest from rendering.
+      var steps = [
+        rewriteAssetUrls, addCopyButtons, highlightCode, processAdmonitions,
+        wrapTables, markTaskListItems, renderMermaidDiagrams, renderMath,
+        attachImageLightbox
+      ];
+      for (var i = 0; i < steps.length; i++) {
+        try { steps[i](root); }
+        catch (e) { console.warn('folio: enhancement step failed:', e); }
+      }
     }
 
     // ── Asset URL rewriting ─────────────────────────────────────

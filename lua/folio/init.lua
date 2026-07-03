@@ -45,6 +45,10 @@ function M.setup(opts)
   end, { desc = "Open Markdown preview in browser" })
 
   vim.api.nvim_create_user_command("FolioClose", function()
+    require("folio.buffer").close()
+  end, { desc = "Close Markdown preview for the current buffer" })
+
+  vim.api.nvim_create_user_command("FolioCloseAll", function()
     require("folio.buffer").close_all()
   end, { desc = "Close all Markdown previews" })
 
@@ -74,6 +78,11 @@ end
 --- close stops the preview for the current buffer.
 function M.close()
   require("folio.buffer").close()
+end
+
+--- close_all stops the preview for all buffers.
+function M.close_all()
+  require("folio.buffer").close_all()
 end
 
 return M

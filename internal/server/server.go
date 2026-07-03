@@ -22,15 +22,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/liubang/folio.nvim" // embedded frontend assets (package assets)
 	"github.com/liubang/folio.nvim/internal/markdown"
 	"github.com/liubang/folio.nvim/internal/protocol"
 
@@ -74,8 +77,13 @@ func New(port int) (*Server, error) {
 	mux.HandleFunc("/ws/", s.handleWebSocket)
 	mux.HandleFunc("/files/", s.handleFile)
 
-	// Serve embedded static assets from the frontend/ directory.
-	mux.Handle("/", http.FileServer(http.Dir(s.staticDir())))
+	// Serve embedded static assets (index.html, vendored libs) from the
+	// go:embed FS so the binary is fully self-contained.
+	frontendFS, err := fs.Sub(assets.Files, "frontend")
+	if err != nil {
+		return nil, fmt.Errorf("embed frontend: %w", err)
+	}
+	mux.Handle("/", http.FileServer(http.FS(frontendFS)))
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -86,9 +94,10 @@ func New(port int) (*Server, error) {
 	s.httpSrv = &http.Server{
 		Handler: mux,
 		// Conservative timeouts for local-only usage.
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second, // mitigates slowloris-style stalls
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -105,29 +114,6 @@ func (s *Server) Port() int {
 	return s.port
 }
 
-// staticDir returns the path to the frontend/ assets directory.
-func (s *Server) staticDir() string {
-	// Resolve relative to the binary location.
-	// Binary is at <plugin>/build/folio, frontend is at <plugin>/frontend/.
-	if exe, err := os.Executable(); err == nil {
-		binDir := filepath.Dir(exe) // <plugin>/build/
-		for _, rel := range []string{"../frontend", "frontend"} {
-			candidate := filepath.Join(binDir, rel)
-			if info, err2 := os.Stat(candidate); err2 == nil && info.IsDir() {
-				return candidate
-			}
-		}
-	}
-	// Fallback: CWD-relative search (useful during development).
-	dirs := []string{"frontend", "../../frontend", "../frontend"}
-	for _, d := range dirs {
-		if info, err := os.Stat(d); err == nil && info.IsDir() {
-			return d
-		}
-	}
-	return "frontend"
-}
-
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true }, // localhost-only
 }
@@ -138,17 +124,25 @@ func parseBufnr(s string) (int, error) {
 	if s == "" {
 		return 0, fmt.Errorf("empty bufnr")
 	}
-	var n int
-	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+	// strconv.Atoi rejects partial matches like "12abc" (which Sscanf would
+	// silently accept), giving stricter validation.
+	n, err := strconv.Atoi(s)
+	if err != nil {
 		return 0, fmt.Errorf("invalid bufnr %q: %w", s, err)
 	}
 	return n, nil
 }
 
 // handlePreview serves the single-page HTML that opens a WebSocket connection
-// for live preview.
+// for live preview. The HTML is read from the embedded frontend/ FS.
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, filepath.Join(s.staticDir(), "index.html"))
+	data, err := assets.Files.ReadFile("frontend/index.html")
+	if err != nil {
+		http.Error(w, "index.html not found in embedded assets", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
 }
 
 // handleFile serves a local file from the markdown file's directory.
@@ -167,6 +161,12 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	relPath := ""
 	if len(parts) > 1 {
 		relPath = parts[1]
+	}
+	if relPath == "" {
+		// Refuse bare directory requests — otherwise http.ServeFile would
+		// enumerate the work directory contents to the browser.
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	s.mu.RLock()
@@ -202,15 +202,20 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 // handleWebSocket upgrades an HTTP connection and registers the client for
 // the given bufnr.
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Validate bufnr *before* upgrading: refusing a bad request with a plain
+	// 400 is cleaner than upgrading a WebSocket only to close it immediately,
+	// and avoids silently bucketing the client onto buffer 1 (which would mix
+	// content and scroll events across unrelated buffers).
+	bufnr, parseErr := parseBufnr(r.URL.Query().Get("bufnr"))
+	if parseErr != nil {
+		http.Error(w, "invalid or missing bufnr", http.StatusBadRequest)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("folio: websocket upgrade error: %v", err)
 		return
-	}
-
-	bufnr, parseErr := parseBufnr(r.URL.Query().Get("bufnr"))
-	if parseErr != nil {
-		bufnr = 1 // fallback for backward compat
 	}
 
 	entry := &connEntry{conn: conn}
@@ -221,16 +226,26 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	s.clients[bufnr][entry] = struct{}{}
 
-	// Replay the last cached content so the new client sees it immediately.
+	// Snapshot the cached content under the lock, but perform the actual
+	// WebSocket write *after* releasing s.mu. Writing while holding s.mu would
+	// block every other client (new connections, broadcasts, cursor events)
+	// for up to the write deadline if this client is slow to drain.
+	var cachedData []byte
 	if cached, ok := s.lastContent[bufnr]; ok {
 		if data, err := json.Marshal(cached); err == nil {
-			entry.wmu.Lock()
-			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			conn.WriteMessage(websocket.TextMessage, data)
-			entry.wmu.Unlock()
+			cachedData = data
 		}
 	}
 	s.mu.Unlock()
+
+	if len(cachedData) > 0 {
+		entry.wmu.Lock()
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := conn.WriteMessage(websocket.TextMessage, cachedData); err != nil {
+			log.Printf("folio: replay write error (bufnr=%d): %v", bufnr, err)
+		}
+		entry.wmu.Unlock()
+	}
 
 	// Read loop — drains any client→server messages (future: click-to-scroll-back).
 	go func() {
@@ -266,6 +281,8 @@ func (s *Server) RunStdinLoop() {
 			s.handleContentChanged(&msg)
 		case protocol.EventCursorMoved:
 			s.handleCursorMoved(&msg)
+		case protocol.EventBufferClosed:
+			s.handleBufferClosed(&msg)
 		default:
 			log.Printf("folio: unknown event: %s", msg.Event)
 		}
@@ -311,6 +328,25 @@ func (s *Server) handleCursorMoved(msg *protocol.IncomingMessage) {
 		ScrollToLine: msg.CursorLine,
 	}
 	s.broadcast(msg.Bufnr, &out)
+}
+
+// handleBufferClosed releases all server-side state for a buffer that Neovim
+// has detached from: closes any WebSocket clients for the buffer and drops the
+// cached render and the work-directory mapping. Without this, long editing
+// sessions would accumulate stale entries in lastContent/workDirs indefinitely.
+func (s *Server) handleBufferClosed(msg *protocol.IncomingMessage) {
+	s.mu.Lock()
+	if entries, ok := s.clients[msg.Bufnr]; ok {
+		for entry := range entries {
+			entry.wmu.Lock()
+			entry.conn.Close()
+			entry.wmu.Unlock()
+		}
+		delete(s.clients, msg.Bufnr)
+	}
+	delete(s.lastContent, msg.Bufnr)
+	delete(s.workDirs, msg.Bufnr)
+	s.mu.Unlock()
 }
 
 func (s *Server) broadcast(bufnr int, msg *protocol.OutgoingMessage) {
@@ -362,11 +398,19 @@ func (s *Server) Shutdown() {
 		s.mu.Lock()
 		for _, entries := range s.clients {
 			for entry := range entries {
+				// Take the per-connection write lock: a broadcast goroutine may
+				// currently be mid-write (it releases s.mu before acquiring wmu).
+				// gorilla/websocket forbids concurrent writers on the same
+				// connection, so we must serialize here too.
+				entry.wmu.Lock()
+				entry.conn.SetWriteDeadline(time.Now().Add(time.Second))
 				entry.conn.WriteMessage(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseGoingAway, "server shutting down"))
 				entry.conn.Close()
+				entry.wmu.Unlock()
 			}
 		}
+		s.clients = make(map[int]map[*connEntry]struct{})
 		s.mu.Unlock()
 
 		if err := s.httpSrv.Shutdown(ctx); err != nil {
