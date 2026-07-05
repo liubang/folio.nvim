@@ -81,11 +81,11 @@ CPU-heavy work on the Neovim main thread. Styling is closely aligned with
 
 ## Commands
 
-| Command           | Description                                |
-| ----------------- | ------------------------------------------ |
-| `:FolioPreview`   | Open the Markdown preview in a browser tab |
-| `:FolioClose`     | Close the preview for the current buffer   |
-| `:FolioCloseAll`  | Close all Markdown previews                |
+| Command          | Description                                |
+| ---------------- | ------------------------------------------ |
+| `:FolioPreview`  | Open the Markdown preview in a browser tab |
+| `:FolioClose`    | Close the preview for the current buffer   |
+| `:FolioCloseAll` | Close all Markdown previews                |
 
 ## API
 
