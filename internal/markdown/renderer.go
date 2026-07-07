@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"fmt"
 	"html"
+	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -67,7 +69,7 @@ func (idx *lineIndex) lineAt(offset int) int {
 func NewRenderer() *Renderer {
 	return &Renderer{
 		md: goldmark.New(
-			goldmark.WithExtensions(extension.GFM),
+			goldmark.WithExtensions(extension.GFM, extension.Footnote),
 			goldmark.WithRendererOptions(
 				ghtml.WithUnsafe(),
 				renderer.WithNodeRenderers(
@@ -81,6 +83,45 @@ func NewRenderer() *Renderer {
 // lineIndexKey is the attribute key used to store the pre-computed line index
 // on the Document node so child renderers can retrieve it.
 const lineIndexKey = "folio.lineIndex"
+
+// slugTrackerKey is the attribute key used to store the per-document slug
+// de-duplication tracker so that repeated heading texts (e.g. two sections
+// both titled "Overview") get distinct, stable anchor IDs.
+const slugTrackerKey = "folio.slugTracker"
+
+// slugTracker de-duplicates heading anchor slugs within a single document,
+// mirroring GitHub's behavior of suffixing repeats with -1, -2, etc.
+type slugTracker struct {
+	seen map[string]int
+}
+
+// next returns a unique slug derived from text, appending a numeric suffix
+// if the base slug has already been used in this document.
+func (t *slugTracker) next(text string) string {
+	base := slugify(text)
+	if base == "" {
+		base = "section"
+	}
+	n := t.seen[base]
+	t.seen[base] = n + 1
+	if n == 0 {
+		return base
+	}
+	return fmt.Sprintf("%s-%d", base, n)
+}
+
+// slugNonWordRe matches runs of characters that are not letters, numbers,
+// spaces, or hyphens — GitHub strips these when generating heading anchors.
+var slugNonWordRe = regexp.MustCompile(`[^\p{L}\p{N}\s-]`)
+
+// slugify converts heading text into a GitHub-style anchor slug: lowercase,
+// punctuation stripped, whitespace collapsed to single hyphens.
+func slugify(text string) string {
+	s := strings.ToLower(strings.TrimSpace(text))
+	s = slugNonWordRe.ReplaceAllString(s, "")
+	s = strings.Join(strings.Fields(s), "-")
+	return s
+}
 
 // SourceLineRenderer wraps the default HTML renderer to add data-source-line
 // attributes to block-level nodes.
@@ -101,6 +142,21 @@ func (r *SourceLineRenderer) getLineIndex(node ast.Node) *lineIndex {
 	return &lineIndex{}
 }
 
+// getSlugTracker walks up to the Document node and retrieves the per-document
+// slugTracker used to assign unique heading anchor IDs.
+func (r *SourceLineRenderer) getSlugTracker(node ast.Node) *slugTracker {
+	doc := node
+	for doc.Parent() != nil {
+		doc = doc.Parent()
+	}
+	if v, ok := doc.AttributeString(slugTrackerKey); ok {
+		if t, ok2 := v.(*slugTracker); ok2 {
+			return t
+		}
+	}
+	return &slugTracker{seen: map[string]int{}}
+}
+
 // RegisterFuncs implements renderer.Renderer.
 func (r *SourceLineRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindDocument, r.renderDocument)
@@ -112,6 +168,8 @@ func (r *SourceLineRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegister
 	reg.Register(ast.KindBlockquote, r.renderBlockquote)
 	reg.Register(ast.KindThematicBreak, r.renderThematicBreak)
 	reg.Register(extAST.KindTable, r.renderTable)
+	reg.Register(extAST.KindFootnote, r.renderFootnote)
+	reg.Register(extAST.KindFootnoteList, r.renderFootnoteList)
 }
 
 // sourceLineAttr computes the 1-based source line number of the block node
@@ -157,6 +215,9 @@ func (r *SourceLineRenderer) renderDocument(w util.BufWriter, source []byte, nod
 		// so that all block renderers can use O(log n) lookups.
 		idx := buildLineIndex(source)
 		node.SetAttributeString(lineIndexKey, idx)
+		// Fresh slug tracker per document so heading anchor IDs (and their
+		// de-duplication counters) don't leak across renders.
+		node.SetAttributeString(slugTrackerKey, &slugTracker{seen: map[string]int{}})
 		w.WriteString("<article class=\"folio-document\">\n")
 		return ast.WalkContinue, nil
 	}
@@ -167,7 +228,8 @@ func (r *SourceLineRenderer) renderDocument(w util.BufWriter, source []byte, nod
 func (r *SourceLineRenderer) renderHeading(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	n := node.(*ast.Heading)
 	if entering {
-		fmt.Fprintf(w, "<h%d%s>", n.Level, r.sourceLineAttr(node, r.getLineIndex(node)))
+		id := r.getSlugTracker(node).next(string(n.Text(source)))
+		fmt.Fprintf(w, "<h%d id=\"%s\"%s>", n.Level, html.EscapeString(id), r.sourceLineAttr(node, r.getLineIndex(node)))
 	} else {
 		fmt.Fprintf(w, "</h%d>\n", n.Level)
 	}
@@ -256,6 +318,34 @@ func (r *SourceLineRenderer) renderTable(w util.BufWriter, source []byte, node a
 		fmt.Fprintf(w, "<table%s>\n", r.sourceLineAttr(node, r.getLineIndex(node)))
 	} else {
 		w.WriteString("</table>\n")
+	}
+	return ast.WalkContinue, nil
+}
+
+// renderFootnote overrides extension.Footnote's default <li id="fn:N">...</li>
+// renderer to additionally inject a data-source-line attribute, so scroll-sync
+// also works when the cursor is on a footnote definition at the bottom of the
+// document. goldmark's renderer.NodeRenderer registry only allows one handler
+// per node kind, so we fully re-implement the (small) <li> shell here rather
+// than delegating to the extension's renderer for the parts we don't change.
+func (r *SourceLineRenderer) renderFootnote(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	n := node.(*extAST.Footnote)
+	if entering {
+		fmt.Fprintf(w, "<li id=\"fn:%d\"%s>\n", n.Index, r.sourceLineAttr(node, r.getLineIndex(node)))
+	} else {
+		w.WriteString("</li>\n")
+	}
+	return ast.WalkContinue, nil
+}
+
+// renderFootnoteList wraps the <div class="footnotes"> container that holds
+// all footnote definitions, so the whole footnotes section participates in
+// scroll-sync (anchored to the first footnote's source line).
+func (r *SourceLineRenderer) renderFootnoteList(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		fmt.Fprintf(w, "<div class=\"footnotes\" role=\"doc-endnotes\"%s>\n<hr>\n<ol>\n", r.sourceLineAttr(node, r.getLineIndex(node)))
+	} else {
+		w.WriteString("</ol>\n</div>\n")
 	}
 	return ast.WalkContinue, nil
 }

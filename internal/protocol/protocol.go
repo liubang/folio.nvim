@@ -24,6 +24,7 @@ type IncomingMessage struct {
 	Content    string `json:"content,omitempty"`
 	CursorLine int    `json:"cursor_line"`
 	WorkDir    string `json:"work_dir,omitempty"` // directory of the markdown file for resolving relative paths
+	Filename   string `json:"filename,omitempty"` // base name of the markdown file (e.g. "README.md"), used for the browser tab title
 }
 
 // Event types sent by Neovim.
@@ -39,6 +40,7 @@ type OutgoingMessage struct {
 	Bufnr        int    `json:"bufnr"`
 	HTML         string `json:"html,omitempty"`
 	ScrollToLine int    `json:"scroll_to_line,omitempty"`
+	Filename     string `json:"filename,omitempty"` // base name of the markdown file, used by the frontend to set document.title
 }
 
 // Outgoing message types.

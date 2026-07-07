@@ -253,3 +253,194 @@ func TestTable_WithInlineMarkup_NoPanic(t *testing.T) {
 		t.Fatalf("expected <table> in output")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Headings get a GitHub-style slug id so the frontend TOC can deep-link to
+// them via #anchor.
+// ---------------------------------------------------------------------------
+
+func TestHeading_SlugID(t *testing.T) {
+	r := NewRenderer()
+	src := "# Hello World\n## Getting Started!\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+	if !strings.Contains(html, `id="hello-world"`) {
+		t.Errorf("expected id=hello-world, got:\n%s", html)
+	}
+	if !strings.Contains(html, `id="getting-started"`) {
+		t.Errorf("expected id=getting-started (punctuation stripped), got:\n%s", html)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate heading text must get de-duplicated slugs, mirroring GitHub's
+// -1, -2 suffixing behavior.
+// ---------------------------------------------------------------------------
+
+func TestHeading_SlugID_Deduplication(t *testing.T) {
+	r := NewRenderer()
+	src := "# Overview\n\ntext\n\n# Overview\n\nmore text\n\n# Overview\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+	for _, id := range []string{`id="overview"`, `id="overview-1"`, `id="overview-2"`} {
+		if !strings.Contains(html, id) {
+			t.Errorf("expected %s, got:\n%s", id, html)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Heading slug ids must be HTML-escaped / safe even with inline markup or
+// unusual characters in the heading text (defense in depth alongside the
+// language-attribute XSS test above).
+// ---------------------------------------------------------------------------
+
+func TestHeading_SlugID_SafeWithInlineMarkup(t *testing.T) {
+	r := NewRenderer()
+	src := "# **Bold** & <weird>\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+	if strings.Contains(html, `id="**bold**`) {
+		t.Errorf("slug must not retain markdown syntax, got:\n%s", html)
+	}
+	// The heading id attribute value itself must not break out of the
+	// attribute (no unescaped quotes/angle brackets).
+	if strings.Contains(html, `id="`) {
+		start := strings.Index(html, `id="`) + len(`id="`)
+		end := strings.Index(html[start:], `"`)
+		if end == -1 {
+			t.Fatalf("malformed id attribute in:\n%s", html)
+		}
+		idVal := html[start : start+end]
+		if strings.ContainsAny(idVal, `<>"`) {
+			t.Errorf("id attribute value contains unsafe characters: %q", idVal)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Footnotes (extension.Footnote, PHP Markdown Extra syntax): `text[^1]` plus
+// a `[^1]: definition` block. goldmark renders the reference as
+// `<sup id="fnref:N"><a href="#fn:N" class="footnote-ref">N</a></sup>` and
+// collects definitions into `<div class="footnotes"><ol><li id="fn:N">...`.
+// ---------------------------------------------------------------------------
+
+func TestFootnote_BasicRendering(t *testing.T) {
+	r := NewRenderer()
+	src := "Here is a claim[^1].\n\n[^1]: The supporting evidence.\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+
+	// Reference marker in the body.
+	if !strings.Contains(html, `id="fnref:1"`) {
+		t.Errorf("expected fnref:1 marker, got:\n%s", html)
+	}
+	if !strings.Contains(html, `href="#fn:1"`) {
+		t.Errorf("expected link to #fn:1, got:\n%s", html)
+	}
+	if !strings.Contains(html, `class="footnote-ref"`) {
+		t.Errorf("expected footnote-ref class, got:\n%s", html)
+	}
+
+	// Footnote definition list at the end of the document.
+	if !strings.Contains(html, `class="footnotes"`) {
+		t.Errorf("expected footnotes container, got:\n%s", html)
+	}
+	if !strings.Contains(html, `id="fn:1"`) {
+		t.Errorf("expected fn:1 definition, got:\n%s", html)
+	}
+	if !strings.Contains(html, "The supporting evidence.") {
+		t.Errorf("expected footnote body text, got:\n%s", html)
+	}
+
+	// Backlink from the definition back to the reference.
+	if !strings.Contains(html, `href="#fnref:1"`) {
+		t.Errorf("expected backlink to #fnref:1, got:\n%s", html)
+	}
+	if !strings.Contains(html, `class="footnote-backref"`) {
+		t.Errorf("expected footnote-backref class, got:\n%s", html)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The footnote definition (<li>) and its container (<div class="footnotes">)
+// must carry data-source-line so scroll-sync keeps working when the cursor
+// is at the bottom of the document on a footnote definition line.
+// ---------------------------------------------------------------------------
+
+func TestFootnote_SourceLine(t *testing.T) {
+	r := NewRenderer()
+	// Line 1: claim, line 2: blank, line 3: footnote definition.
+	src := "Claim one[^a].\n\n[^a]: Definition text.\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+
+	if !strings.Contains(html, `class="footnotes" role="doc-endnotes" data-source-line="3"`) {
+		t.Errorf("expected footnotes container with data-source-line=3, got:\n%s", html)
+	}
+	if !strings.Contains(html, `id="fn:1" data-source-line="3"`) {
+		t.Errorf("expected fn:1 li with data-source-line=3, got:\n%s", html)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A footnote referenced multiple times gets one <sup> per reference (with
+// distinct fnref ids) but a single shared definition, with one backlink per
+// reference.
+// ---------------------------------------------------------------------------
+
+func TestFootnote_MultipleReferences(t *testing.T) {
+	r := NewRenderer()
+	src := "First[^dup] and second[^dup] mention.\n\n[^dup]: Shared note.\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+
+	if !strings.Contains(html, `id="fnref:1"`) {
+		t.Errorf("expected first reference fnref:1, got:\n%s", html)
+	}
+	if !strings.Contains(html, `id="fnref1:1"`) {
+		t.Errorf("expected second reference fnref1:1, got:\n%s", html)
+	}
+	if strings.Count(html, `id="fn:1"`) != 1 {
+		t.Errorf("expected exactly one shared definition fn:1, got:\n%s", html)
+	}
+	if strings.Count(html, `class="footnote-backref"`) != 2 {
+		t.Errorf("expected two backlinks (one per reference), got:\n%s", html)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A `[^x]: ...` definition with no corresponding `[^x]` reference in the body
+// must not be rendered at all (matches goldmark/PHP Markdown Extra behavior).
+// ---------------------------------------------------------------------------
+
+func TestFootnote_UndefinedReferenceOmitted(t *testing.T) {
+	r := NewRenderer()
+	src := "No references here.\n\n[^orphan]: Never used.\n"
+	out, err := r.Convert([]byte(src))
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	html := string(out)
+	if strings.Contains(html, "footnotes") || strings.Contains(html, "Never used") {
+		t.Errorf("orphan footnote definition should be dropped, got:\n%s", html)
+	}
+}

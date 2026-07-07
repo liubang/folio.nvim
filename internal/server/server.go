@@ -313,6 +313,7 @@ func (s *Server) handleContentChanged(msg *protocol.IncomingMessage) {
 		Bufnr:        msg.Bufnr,
 		HTML:         string(html),
 		ScrollToLine: msg.CursorLine,
+		Filename:     msg.Filename,
 	}
 	// Cache so that late-connecting clients get content immediately.
 	s.mu.Lock()

@@ -208,11 +208,14 @@ function M._send_content(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local content = table.concat(lines, "\n")
 
-  -- Resolve the file's directory for relative-path assets (images, etc.).
+  -- Resolve the file's directory for relative-path assets (images, etc.),
+  -- and its base name for the browser tab title.
   local filepath = vim.api.nvim_buf_get_name(bufnr)
   local work_dir = ""
+  local filename = ""
   if filepath and filepath ~= "" then
     work_dir = vim.fn.fnamemodify(filepath, ":h")
+    filename = vim.fn.fnamemodify(filepath, ":t")
   end
 
   -- Get cursor position from the window actually showing this buffer.
@@ -228,6 +231,7 @@ function M._send_content(bufnr)
     content = content,
     cursor_line = cursor_line,
     work_dir = work_dir,
+    filename = filename,
   })
   if not ok then
     vim.notify("[folio] JSON encode error: " .. tostring(msg), vim.log.levels.ERROR)

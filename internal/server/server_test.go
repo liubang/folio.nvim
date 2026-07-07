@@ -314,6 +314,81 @@ func TestHandleContentChanged_BroadcastsHTML(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// handleContentChanged must forward the Filename from the incoming Neovim
+// message to the OutgoingMessage broadcast to browsers, so the frontend can
+// set document.title (e.g. "README.md — folio") and distinguish multiple
+// preview tabs open for different buffers.
+// ---------------------------------------------------------------------------
+
+func TestHandleContentChanged_ForwardsFilename(t *testing.T) {
+	srv := newTestServer(t)
+	bufnr := 7
+
+	conn := dialWS(t, wsURL(srv, bufnr))
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	srv.handleContentChanged(&protocol.IncomingMessage{
+		Event:      protocol.EventContentChanged,
+		Bufnr:      bufnr,
+		Content:    "# Hello",
+		CursorLine: 1,
+		Filename:   "README.md",
+	})
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage failed: %v", err)
+	}
+
+	var msg protocol.OutgoingMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if msg.Filename != "README.md" {
+		t.Errorf("expected filename=%q, got %q", "README.md", msg.Filename)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The cached lastContent replayed to late-connecting clients must also carry
+// the Filename, so a browser tab refresh (which re-dials the WebSocket)
+// still shows the correct title before the next content_changed event.
+// ---------------------------------------------------------------------------
+
+func TestHandleContentChanged_FilenameSurvivesReplay(t *testing.T) {
+	srv := newTestServer(t)
+	bufnr := 8
+
+	srv.handleContentChanged(&protocol.IncomingMessage{
+		Event:    protocol.EventContentChanged,
+		Bufnr:    bufnr,
+		Content:  "# Hello",
+		Filename: "notes.md",
+	})
+
+	// Connect *after* the content has been broadcast — this client only
+	// receives the replayed cached message on connect.
+	conn := dialWS(t, wsURL(srv, bufnr))
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage failed: %v", err)
+	}
+
+	var msg protocol.OutgoingMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if msg.Filename != "notes.md" {
+		t.Errorf("expected replayed filename=%q, got %q", "notes.md", msg.Filename)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // handleBufferClosed releases all server-side state for a buffer.
 // ---------------------------------------------------------------------------
 
