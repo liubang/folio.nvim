@@ -116,11 +116,9 @@ func TestWebSocket_ConcurrentWriteSafety(t *testing.T) {
 	bufnr := 2
 
 	// Pre-populate cached content so handleWebSocket replays it.
-	srv.mu.Lock()
-	srv.lastContent[bufnr] = &protocol.OutgoingMessage{
+	srv.hub.setLastContent(bufnr, &protocol.OutgoingMessage{
 		Type: protocol.TypeRender, Bufnr: bufnr, HTML: "<p>hello</p>",
-	}
-	srv.mu.Unlock()
+	})
 
 	// Dial and immediately broadcast concurrently.
 	var wg sync.WaitGroup
@@ -207,9 +205,7 @@ func TestHandleFile_SymlinkTraversal(t *testing.T) {
 	}
 
 	bufnr := 10
-	srv.mu.Lock()
-	srv.workDirs[bufnr] = workDir
-	srv.mu.Unlock()
+	srv.hub.setWorkDir(bufnr, workDir)
 
 	// Try to access workdir/link/secret.txt — should be blocked.
 	url := fmt.Sprintf("http://127.0.0.1:%d/files/%d/link/secret.txt", srv.Port(), bufnr)
@@ -238,9 +234,7 @@ func TestHandleFile_DotDotTraversal(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "passwd"), []byte("root:x:0:0"), 0644)
 
 	bufnr := 11
-	srv.mu.Lock()
-	srv.workDirs[bufnr] = workDir
-	srv.mu.Unlock()
+	srv.hub.setWorkDir(bufnr, workDir)
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/files/%d/..%%2fpasswd", srv.Port(), bufnr)
 	resp, err := http.Get(url)
@@ -397,12 +391,10 @@ func TestHandleBufferClosed_ReleasesState(t *testing.T) {
 	bufnr := 42
 
 	// Seed cached content, a work dir, and a connected client.
-	srv.mu.Lock()
-	srv.lastContent[bufnr] = &protocol.OutgoingMessage{
+	srv.hub.setLastContent(bufnr, &protocol.OutgoingMessage{
 		Type: protocol.TypeRender, Bufnr: bufnr, HTML: "<p>x</p>",
-	}
-	srv.workDirs[bufnr] = t.TempDir()
-	srv.mu.Unlock()
+	})
+	srv.hub.setWorkDir(bufnr, t.TempDir())
 
 	conn := dialWS(t, wsURL(srv, bufnr))
 	defer conn.Close()
@@ -413,11 +405,11 @@ func TestHandleBufferClosed_ReleasesState(t *testing.T) {
 		Bufnr: bufnr,
 	})
 
-	srv.mu.RLock()
-	_, hasClients := srv.clients[bufnr]
-	_, hasContent := srv.lastContent[bufnr]
-	_, hasDir := srv.workDirs[bufnr]
-	srv.mu.RUnlock()
+	srv.hub.mu.RLock()
+	_, hasClients := srv.hub.clients[bufnr]
+	_, hasContent := srv.hub.lastContent[bufnr]
+	_, hasDir := srv.hub.workDirs[bufnr]
+	srv.hub.mu.RUnlock()
 
 	if hasClients {
 		t.Errorf("expected clients[%d] to be cleared", bufnr)

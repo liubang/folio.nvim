@@ -93,7 +93,7 @@ function M._attach(bufnr)
       if not buffers[bufnr] then
         return true -- detach this callback
       end
-      M._debounce_content(bufnr, function()
+      M._debounce(bufnr, "content_timer", function()
         M._send_content(bufnr)
       end, config.debounce_ms)
     end,
@@ -105,7 +105,7 @@ function M._attach(bufnr)
     group = group,
     buffer = bufnr,
     callback = function()
-      M._debounce_cursor(bufnr, function()
+      M._debounce(bufnr, "cursor_timer", function()
         M._send_cursor(bufnr)
       end, 50)
     end,
@@ -124,23 +124,9 @@ function M._detach(bufnr)
     return
   end
 
-  -- Cancel pending content timer.
-  if state.content_timer then
-    state.content_timer:stop()
-    if not state.content_timer:is_closing() then
-      state.content_timer:close()
-    end
-    state.content_timer = nil
-  end
-
-  -- Cancel pending cursor timer.
-  if state.cursor_timer then
-    state.cursor_timer:stop()
-    if not state.cursor_timer:is_closing() then
-      state.cursor_timer:close()
-    end
-    state.cursor_timer = nil
-  end
+  -- Cancel any pending debounce timers.
+  M._close_timer(state, "content_timer")
+  M._close_timer(state, "cursor_timer")
 
   -- Remove the augroup (also removes all autocmds in it).
   pcall(vim.api.nvim_del_augroup_by_name, "FolioBuf" .. bufnr)
@@ -151,50 +137,44 @@ function M._detach(bufnr)
   buffers[bufnr] = nil
 end
 
---- _debounce_content wraps a callback with a per-buffer content debounce timer.
----@param bufnr   integer
----@param callback fun()
----@param delay_ms integer
-function M._debounce_content(bufnr, callback, delay_ms)
-  local state = buffers[bufnr]
-  if not state then
+--- _close_timer stops and closes the uv timer stored under state[field], if any.
+---@param state table   a folio.BufferState
+---@param field string  field name holding the uv_timer_t
+function M._close_timer(state, field)
+  local timer = state[field]
+  if not timer then
     return
   end
-
-  if state.content_timer then
-    state.content_timer:stop()
-    state.content_timer:start(delay_ms, 0, function()
-      vim.schedule(callback)
-    end)
-  else
-    state.content_timer = vim.uv.new_timer()
-    state.content_timer:start(delay_ms, 0, function()
-      vim.schedule(callback)
-    end)
+  timer:stop()
+  if not timer:is_closing() then
+    timer:close()
   end
+  state[field] = nil
 end
 
---- _debounce_cursor wraps a callback with a per-buffer cursor debounce timer.
----@param bufnr   integer
----@param callback fun()
----@param delay_ms integer
-function M._debounce_cursor(bufnr, callback, delay_ms)
+--- _debounce (re)starts a timer stored under buffers[bufnr][timer_field],
+--- invoking callback (wrapped in vim.schedule) after delay_ms of inactivity.
+--- Used for both content-change and cursor-move debouncing; the two are kept
+--- as independent timers (different fields) so a burst of cursor movement
+--- doesn't delay a pending content sync, and vice versa.
+---@param bufnr       integer
+---@param timer_field string  field name in the buffer state table
+---@param callback    fun()
+---@param delay_ms    integer
+function M._debounce(bufnr, timer_field, callback, delay_ms)
   local state = buffers[bufnr]
   if not state then
     return
   end
 
-  if state.cursor_timer then
-    state.cursor_timer:stop()
-    state.cursor_timer:start(delay_ms, 0, function()
-      vim.schedule(callback)
-    end)
+  if not state[timer_field] then
+    state[timer_field] = vim.uv.new_timer()
   else
-    state.cursor_timer = vim.uv.new_timer()
-    state.cursor_timer:start(delay_ms, 0, function()
-      vim.schedule(callback)
-    end)
+    state[timer_field]:stop()
   end
+  state[timer_field]:start(delay_ms, 0, function()
+    vim.schedule(callback)
+  end)
 end
 
 --- _send_content reads the full buffer content and sends it to the Go sidecar.

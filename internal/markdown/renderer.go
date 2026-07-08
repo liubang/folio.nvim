@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -60,8 +60,11 @@ func buildLineIndex(source []byte) *lineIndex {
 
 // lineAt returns the 1-based line number for the given byte offset.
 func (idx *lineIndex) lineAt(offset int) int {
-	// sort.SearchInts returns the number of newlines before `offset`.
-	return sort.SearchInts(idx.offsets, offset) + 1
+	// slices.BinarySearch returns the insertion point for offset, i.e. the
+	// number of newlines strictly before it — equivalently, offset's
+	// 0-based line number.
+	pos, _ := slices.BinarySearch(idx.offsets, offset)
+	return pos + 1
 }
 
 // NewRenderer returns a Goldmark-compatible Markdown → HTML converter that
@@ -125,36 +128,45 @@ func slugify(text string) string {
 
 // SourceLineRenderer wraps the default HTML renderer to add data-source-line
 // attributes to block-level nodes.
+//
+// It is stateless by design: goldmark's NodeRenderer is registered once per
+// Renderer and may be reused across documents, so per-document state (the
+// lineIndex and slugTracker) cannot live in struct fields. Instead it is
+// stashed on the Document node's attributes by renderDocument and retrieved
+// via docAttr below.
 type SourceLineRenderer struct{}
 
-// getLineIndex walks up to the Document node and retrieves the pre-computed
-// lineIndex. Falls back to an empty index if not found.
-func (r *SourceLineRenderer) getLineIndex(node ast.Node) *lineIndex {
-	doc := node
-	for doc.Parent() != nil {
-		doc = doc.Parent()
+// rootDocument walks up the tree to the owning Document node.
+func rootDocument(node ast.Node) ast.Node {
+	for node.Parent() != nil {
+		node = node.Parent()
 	}
-	if v, ok := doc.AttributeString(lineIndexKey); ok {
-		if idx, ok2 := v.(*lineIndex); ok2 {
-			return idx
-		}
-	}
-	return &lineIndex{}
+	return node
 }
 
-// getSlugTracker walks up to the Document node and retrieves the per-document
-// slugTracker used to assign unique heading anchor IDs.
-func (r *SourceLineRenderer) getSlugTracker(node ast.Node) *slugTracker {
-	doc := node
-	for doc.Parent() != nil {
-		doc = doc.Parent()
-	}
-	if v, ok := doc.AttributeString(slugTrackerKey); ok {
-		if t, ok2 := v.(*slugTracker); ok2 {
+// docAttr retrieves a typed, per-document value previously stored (by
+// renderDocument) on the Document node's attributes, identified by key.
+// If the attribute is missing or has an unexpected type, fallback() supplies
+// a zero-value substitute so callers never have to nil-check the result.
+func docAttr[T any](node ast.Node, key string, fallback func() T) T {
+	if v, ok := rootDocument(node).AttributeString(key); ok {
+		if t, ok2 := v.(T); ok2 {
 			return t
 		}
 	}
-	return &slugTracker{seen: map[string]int{}}
+	return fallback()
+}
+
+// getLineIndex retrieves the pre-computed lineIndex for node's document.
+// Falls back to an empty index if not found.
+func (r *SourceLineRenderer) getLineIndex(node ast.Node) *lineIndex {
+	return docAttr(node, lineIndexKey, func() *lineIndex { return &lineIndex{} })
+}
+
+// getSlugTracker retrieves the per-document slugTracker used to assign
+// unique heading anchor IDs.
+func (r *SourceLineRenderer) getSlugTracker(node ast.Node) *slugTracker {
+	return docAttr(node, slugTrackerKey, func() *slugTracker { return &slugTracker{seen: map[string]int{}} })
 }
 
 // RegisterFuncs implements renderer.Renderer.
@@ -177,8 +189,8 @@ func (r *SourceLineRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegister
 // pre-computed lineIndex stored in the node's owner document to achieve
 // O(log n) lookup per call. Returns an empty string if the node carries no
 // source position (e.g. a synthetic container with no line-bearing descendant).
-func (r *SourceLineRenderer) sourceLineAttr(node ast.Node, idx *lineIndex) string {
-	line := r.nodeStartLine(node, idx)
+func (r *SourceLineRenderer) sourceLineAttr(node ast.Node) string {
+	line := r.nodeStartLine(node, r.getLineIndex(node))
 	if line <= 0 {
 		return ""
 	}
@@ -229,7 +241,7 @@ func (r *SourceLineRenderer) renderHeading(w util.BufWriter, source []byte, node
 	n := node.(*ast.Heading)
 	if entering {
 		id := r.getSlugTracker(node).next(string(n.Text(source)))
-		fmt.Fprintf(w, "<h%d id=\"%s\"%s>", n.Level, html.EscapeString(id), r.sourceLineAttr(node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<h%d id=\"%s\"%s>", n.Level, html.EscapeString(id), r.sourceLineAttr(node))
 	} else {
 		fmt.Fprintf(w, "</h%d>\n", n.Level)
 	}
@@ -239,7 +251,7 @@ func (r *SourceLineRenderer) renderHeading(w util.BufWriter, source []byte, node
 func (r *SourceLineRenderer) renderParagraph(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
 		w.WriteString("<p")
-		w.WriteString(r.sourceLineAttr(node, r.getLineIndex(node)))
+		w.WriteString(r.sourceLineAttr(node))
 		w.WriteString(">")
 	} else {
 		w.WriteString("</p>\n")
@@ -250,7 +262,7 @@ func (r *SourceLineRenderer) renderParagraph(w util.BufWriter, source []byte, no
 func (r *SourceLineRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
 		w.WriteString("<pre")
-		w.WriteString(r.sourceLineAttr(node, r.getLineIndex(node)))
+		w.WriteString(r.sourceLineAttr(node))
 		w.WriteString("><code>")
 		r.writeCodeLines(w, source, node)
 		w.WriteString("</code></pre>\n")
@@ -263,7 +275,7 @@ func (r *SourceLineRenderer) renderFencedCodeBlock(w util.BufWriter, source []by
 	n := node.(*ast.FencedCodeBlock)
 	if entering {
 		w.WriteString("<pre")
-		w.WriteString(r.sourceLineAttr(node, r.getLineIndex(node)))
+		w.WriteString(r.sourceLineAttr(node))
 		w.WriteString("><code")
 		lang := n.Language(source)
 		if lang != nil {
@@ -285,27 +297,22 @@ func (r *SourceLineRenderer) renderList(w util.BufWriter, source []byte, node as
 		tag = "ol"
 	}
 	if entering {
-		fmt.Fprintf(w, "<%s%s>\n", tag, r.sourceLineAttr(node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<%s%s>\n", tag, r.sourceLineAttr(node))
 	} else {
 		fmt.Fprintf(w, "</%s>\n", tag)
 	}
 	return ast.WalkContinue, nil
 }
 
-func (r *SourceLineRenderer) renderBlockquote(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
-	if entering {
-		fmt.Fprintf(w, "<blockquote%s>\n", r.sourceLineAttr(node, r.getLineIndex(node)))
-	} else {
-		w.WriteString("</blockquote>\n")
-	}
-	return ast.WalkContinue, nil
+func (r *SourceLineRenderer) renderBlockquote(w util.BufWriter, _ []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	return r.renderSimpleBlock(w, "blockquote", node, entering)
 }
 
 func (r *SourceLineRenderer) renderThematicBreak(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if !entering {
 		return ast.WalkContinue, nil
 	}
-	fmt.Fprintf(w, "<hr%s />\n", r.sourceLineAttr(node, r.getLineIndex(node)))
+	fmt.Fprintf(w, "<hr%s />\n", r.sourceLineAttr(node))
 	return ast.WalkContinue, nil
 }
 
@@ -313,11 +320,18 @@ func (r *SourceLineRenderer) renderThematicBreak(w util.BufWriter, source []byte
 // cursor scroll-sync keeps working when the cursor is inside a table. The
 // inner thead/tbody/tr/td nodes are still rendered by goldmark's default
 // HTML renderer (we only override the Table kind itself).
-func (r *SourceLineRenderer) renderTable(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+func (r *SourceLineRenderer) renderTable(w util.BufWriter, _ []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	return r.renderSimpleBlock(w, "table", node, entering)
+}
+
+// renderSimpleBlock writes `<tag data-source-line="N">` on entry and
+// `</tag>` on exit. It factors out the handful of block renderers (e.g.
+// blockquote, table) whose HTML shell differs only by tag name.
+func (r *SourceLineRenderer) renderSimpleBlock(w util.BufWriter, tag string, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
-		fmt.Fprintf(w, "<table%s>\n", r.sourceLineAttr(node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<%s%s>\n", tag, r.sourceLineAttr(node))
 	} else {
-		w.WriteString("</table>\n")
+		fmt.Fprintf(w, "</%s>\n", tag)
 	}
 	return ast.WalkContinue, nil
 }
@@ -331,7 +345,7 @@ func (r *SourceLineRenderer) renderTable(w util.BufWriter, source []byte, node a
 func (r *SourceLineRenderer) renderFootnote(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	n := node.(*extAST.Footnote)
 	if entering {
-		fmt.Fprintf(w, "<li id=\"fn:%d\"%s>\n", n.Index, r.sourceLineAttr(node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<li id=\"fn:%d\"%s>\n", n.Index, r.sourceLineAttr(node))
 	} else {
 		w.WriteString("</li>\n")
 	}
@@ -343,7 +357,7 @@ func (r *SourceLineRenderer) renderFootnote(w util.BufWriter, source []byte, nod
 // scroll-sync (anchored to the first footnote's source line).
 func (r *SourceLineRenderer) renderFootnoteList(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
-		fmt.Fprintf(w, "<div class=\"footnotes\" role=\"doc-endnotes\"%s>\n<hr>\n<ol>\n", r.sourceLineAttr(node, r.getLineIndex(node)))
+		fmt.Fprintf(w, "<div class=\"footnotes\" role=\"doc-endnotes\"%s>\n<hr>\n<ol>\n", r.sourceLineAttr(node))
 	} else {
 		w.WriteString("</ol>\n</div>\n")
 	}

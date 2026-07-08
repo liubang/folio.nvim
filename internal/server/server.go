@@ -40,25 +40,30 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Server is the HTTP + WebSocket sidecar that bridges Neovim (via stdin) and
-// the browser (via WebSocket).
-// connEntry wraps a WebSocket connection with a per-connection write mutex
-// to satisfy gorilla/websocket's "one concurrent writer" requirement.
-type connEntry struct {
-	conn *websocket.Conn
-	wmu  sync.Mutex
-}
+// Timeouts for the local-only HTTP/WebSocket sidecar. Centralized here so
+// every read/write deadline in the package refers to a single source of
+// truth instead of repeating literals at each call site.
+const (
+	wsWriteTimeout = 5 * time.Second
 
+	httpReadHeaderTimeout = 5 * time.Second // mitigates slowloris-style stalls
+	httpReadTimeout       = 10 * time.Second
+	httpWriteTimeout      = 10 * time.Second
+	httpIdleTimeout       = 120 * time.Second
+
+	shutdownTimeout       = 5 * time.Second
+	shutdownWriteDeadline = time.Second
+)
+
+// Server is the HTTP + WebSocket sidecar that bridges Neovim (via stdin) and
+// the browser (via WebSocket). It owns the HTTP lifecycle and Markdown
+// rendering; all per-buffer client/cache bookkeeping is delegated to hub.
 type Server struct {
 	port    int
 	httpSrv *http.Server
 
 	renderer *markdown.Renderer
-
-	mu          sync.RWMutex
-	clients     map[int]map[*connEntry]struct{}    // bufnr → set of connections
-	lastContent map[int]*protocol.OutgoingMessage  // cached last render per bufnr
-	workDirs    map[int]string                     // bufnr → markdown file directory
+	hub      *bufferHub
 
 	shutdownOnce sync.Once
 }
@@ -66,10 +71,8 @@ type Server struct {
 // New creates a Server listening on the given port (0 = auto-assign).
 func New(port int) (*Server, error) {
 	s := &Server{
-		renderer:    markdown.NewRenderer(),
-		clients:     make(map[int]map[*connEntry]struct{}),
-		lastContent: make(map[int]*protocol.OutgoingMessage),
-		workDirs:    make(map[int]string),
+		renderer: markdown.NewRenderer(),
+		hub:      newBufferHub(),
 	}
 
 	mux := http.NewServeMux()
@@ -94,10 +97,10 @@ func New(port int) (*Server, error) {
 	s.httpSrv = &http.Server{
 		Handler: mux,
 		// Conservative timeouts for local-only usage.
-		ReadHeaderTimeout: 5 * time.Second, // mitigates slowloris-style stalls
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
 	}
 
 	go func() {
@@ -169,10 +172,7 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.RLock()
-	workDir := s.workDirs[bufnr]
-	s.mu.RUnlock()
-
+	workDir := s.hub.workDir(bufnr)
 	if workDir == "" {
 		http.Error(w, "no work directory for buffer", http.StatusNotFound)
 		return
@@ -218,41 +218,23 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry := &connEntry{conn: conn}
+	entry := newConnEntry(conn)
+	cachedData := s.hub.register(bufnr, entry)
 
-	s.mu.Lock()
-	if s.clients[bufnr] == nil {
-		s.clients[bufnr] = make(map[*connEntry]struct{})
-	}
-	s.clients[bufnr][entry] = struct{}{}
-
-	// Snapshot the cached content under the lock, but perform the actual
-	// WebSocket write *after* releasing s.mu. Writing while holding s.mu would
-	// block every other client (new connections, broadcasts, cursor events)
-	// for up to the write deadline if this client is slow to drain.
-	var cachedData []byte
-	if cached, ok := s.lastContent[bufnr]; ok {
-		if data, err := json.Marshal(cached); err == nil {
-			cachedData = data
-		}
-	}
-	s.mu.Unlock()
-
+	// The replay write happens *after* registration releases the hub's lock:
+	// register() only snapshots the cached content under the lock, so a slow
+	// client here cannot block other connections (new registrations,
+	// broadcasts, cursor events).
 	if len(cachedData) > 0 {
-		entry.wmu.Lock()
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.WriteMessage(websocket.TextMessage, cachedData); err != nil {
+		if err := entry.send(cachedData); err != nil {
 			log.Printf("folio: replay write error (bufnr=%d): %v", bufnr, err)
 		}
-		entry.wmu.Unlock()
 	}
 
 	// Read loop — drains any client→server messages (future: click-to-scroll-back).
 	go func() {
 		defer func() {
-			s.mu.Lock()
-			delete(s.clients[bufnr], entry)
-			s.mu.Unlock()
+			s.hub.unregister(bufnr, entry)
 			conn.Close()
 		}()
 		for {
@@ -297,9 +279,7 @@ func (s *Server) RunStdinLoop() {
 func (s *Server) handleContentChanged(msg *protocol.IncomingMessage) {
 	// Store work directory for serving relative-path assets (images, etc.).
 	if msg.WorkDir != "" {
-		s.mu.Lock()
-		s.workDirs[msg.Bufnr] = msg.WorkDir
-		s.mu.Unlock()
+		s.hub.setWorkDir(msg.Bufnr, msg.WorkDir)
 	}
 
 	html, err := s.renderer.Convert([]byte(msg.Content))
@@ -316,9 +296,7 @@ func (s *Server) handleContentChanged(msg *protocol.IncomingMessage) {
 		Filename:     msg.Filename,
 	}
 	// Cache so that late-connecting clients get content immediately.
-	s.mu.Lock()
-	s.lastContent[msg.Bufnr] = out
-	s.mu.Unlock()
+	s.hub.setLastContent(msg.Bufnr, out)
 	s.broadcast(msg.Bufnr, out)
 }
 
@@ -334,20 +312,9 @@ func (s *Server) handleCursorMoved(msg *protocol.IncomingMessage) {
 // handleBufferClosed releases all server-side state for a buffer that Neovim
 // has detached from: closes any WebSocket clients for the buffer and drops the
 // cached render and the work-directory mapping. Without this, long editing
-// sessions would accumulate stale entries in lastContent/workDirs indefinitely.
+// sessions would accumulate stale entries in the hub indefinitely.
 func (s *Server) handleBufferClosed(msg *protocol.IncomingMessage) {
-	s.mu.Lock()
-	if entries, ok := s.clients[msg.Bufnr]; ok {
-		for entry := range entries {
-			entry.wmu.Lock()
-			entry.conn.Close()
-			entry.wmu.Unlock()
-		}
-		delete(s.clients, msg.Bufnr)
-	}
-	delete(s.lastContent, msg.Bufnr)
-	delete(s.workDirs, msg.Bufnr)
-	s.mu.Unlock()
+	s.hub.release(msg.Bufnr)
 }
 
 func (s *Server) broadcast(bufnr int, msg *protocol.OutgoingMessage) {
@@ -356,63 +323,17 @@ func (s *Server) broadcast(bufnr int, msg *protocol.OutgoingMessage) {
 		log.Printf("folio: marshal error: %v", err)
 		return
 	}
-
-	// Collect the current set of connections under RLock.
-	s.mu.RLock()
-	entries := make([]*connEntry, 0, len(s.clients[bufnr]))
-	for entry := range s.clients[bufnr] {
-		entries = append(entries, entry)
-	}
-	s.mu.RUnlock()
-
-	// Write to each connection using its per-connection mutex.
-	// Collect failed connections for removal.
-	var failed []*connEntry
-	for _, entry := range entries {
-		entry.wmu.Lock()
-		entry.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := entry.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			log.Printf("folio: write error to client (bufnr=%d): %v", bufnr, err)
-			entry.conn.Close()
-			failed = append(failed, entry)
-		}
-		entry.wmu.Unlock()
-	}
-
-	// Remove failed connections under a full write lock.
-	if len(failed) > 0 {
-		s.mu.Lock()
-		for _, entry := range failed {
-			delete(s.clients[bufnr], entry)
-		}
-		s.mu.Unlock()
-	}
+	s.hub.broadcast(bufnr, data)
 }
 
 // Shutdown gracefully stops the HTTP server and closes all WebSocket connections.
 // Safe to call multiple times — all calls after the first are no-ops.
 func (s *Server) Shutdown() {
 	s.shutdownOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
-		s.mu.Lock()
-		for _, entries := range s.clients {
-			for entry := range entries {
-				// Take the per-connection write lock: a broadcast goroutine may
-				// currently be mid-write (it releases s.mu before acquiring wmu).
-				// gorilla/websocket forbids concurrent writers on the same
-				// connection, so we must serialize here too.
-				entry.wmu.Lock()
-				entry.conn.SetWriteDeadline(time.Now().Add(time.Second))
-				entry.conn.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseGoingAway, "server shutting down"))
-				entry.conn.Close()
-				entry.wmu.Unlock()
-			}
-		}
-		s.clients = make(map[int]map[*connEntry]struct{})
-		s.mu.Unlock()
+		s.hub.closeAll()
 
 		if err := s.httpSrv.Shutdown(ctx); err != nil {
 			log.Printf("folio: http shutdown error: %v", err)
