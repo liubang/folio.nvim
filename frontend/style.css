@@ -24,8 +24,21 @@
   --accent-s: 17%;    /* Accent saturation */
   --accent-l: 50%;    /* Accent lightness */
 
-  /* Typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Ubuntu, sans-serif;
+  /* Typography
+     CJK fonts are appended to --font-sans (after the Latin faces) so
+     Chinese prose falls back to a proper CJK face instead of the browser's
+     arbitrary default, while Latin glyphs still resolve to -apple-system /
+     Segoe UI / etc. first.
+     --font-mono intentionally stays Latin-only: CJK monospace fonts (Sarasa
+     Mono SC, Noto Sans Mono CJK SC, …) ship noticeably wider/heavier Latin
+     glyphs than SF Mono/JetBrains Mono, so mixing them in made plain
+     English code look off. Any CJK characters inside code blocks (e.g.
+     Chinese comments) fall back to the browser's default monospace CJK
+     font instead — a minor tradeoff worth making to keep normal code
+     rendering sharp. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Ubuntu,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Source Han Sans SC", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
   --font-size: 16px;
   --line-height: 1.5;
@@ -138,14 +151,37 @@ body {
      88% 收缩，大屏不超过 line-width。 */
   max-width: min(var(--line-width), var(--max-width));
   margin: 0 auto;
+  /* Font rendering:
+     - antialiased/grayscale avoid macOS's subpixel-AA "bold halo" look —
+       correct for a dark-capable UI regardless of theme.
+     - text-rendering: optimizeSpeed (not optimizeLegibility) for body text.
+       optimizeLegibility enables kerning/ligatures, but on long documents
+       Chromium's layout cost for it grows with text length and mostly
+       benefits headings, not paragraphs; kerning is applied explicitly
+       below instead, and headings opt into optimizeLegibility on their own
+       (short strings, real payoff from ligatures/kerning).
+     - font-kerning declared explicitly rather than left to the UA default. */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
+  text-rendering: optimizeSpeed;
+  font-kerning: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
 ::selection { background: var(--hl1); }
+
+/* Monospace text (code, kbd, status bar, language badges) never needs
+   ligatures — some mono fonts (Fira Code, Cascadia Code) fuse sequences
+   like "->" "!=" "=>" into single glyphs, which is a nice touch in an
+   editor but is unexpected/undesirable in a document preview: it makes
+   copy-pasted code look different from what's rendered and is pure
+   overhead for fonts (SF Mono, JetBrains Mono) that don't have programming
+   ligatures anyway. Centralized here via attribute selector so every
+   var(--font-mono) consumer gets it without repeating the declaration. */
+code, kbd, #folio-status, article pre > code[data-lang]::before {
+  font-variant-ligatures: none;
+}
 
 /* Styled scrollbar (Minimal styled-scrollbar) */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -159,6 +195,11 @@ body {
 article h1, article h2, article h3, article h4 {
   letter-spacing: -0.02em;
   line-height: 1.25;
+  /* Headings are short strings, so the extra kerning/ligature-shaping cost
+     of optimizeLegibility is negligible while the payoff (tighter, more
+     polished glyph spacing) is most visible here — unlike body text where
+     the same setting scales badly with length for little visual gain. */
+  text-rendering: optimizeLegibility;
 }
 article h1, article h2, article h3, article h4, article h5, article h6 {
   margin-top: var(--heading-spacing);
@@ -907,10 +948,6 @@ article details[open] > .table-wrapper {
 }
 .folio-toc-backdrop.open { display: block; }
 
-@media (max-width: 600px) {
-  .folio-toc-toggle { top: 0.75rem; right: 0.75rem; }
-}
-
 /* ═══════════════════════════════════════════════════════════════
    Print styles
    ═══════════════════════════════════════════════════════════════ */
@@ -924,10 +961,12 @@ article details[open] > .table-wrapper {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Responsive tweaks
+   Responsive tweaks (single breakpoint — kept together so all
+   small-screen overrides are visible in one place)
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 600px) {
   body { padding: 1rem 0.75rem 3.5rem; }
   article pre > code { font-size: 0.8em; padding: 0.75em 1em; }
   article th, article td { padding: 0.4em 0.6em; }
+  .folio-toc-toggle { top: 0.75rem; right: 0.75rem; }
 }

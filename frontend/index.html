@@ -15,17 +15,15 @@
 <body>
   <div id="folio-overlay">Disconnected — Neovim session ended.</div>
 
-  <!-- TOC toggle button — shown once the document has at least one heading -->
-  <button class="folio-toc-toggle" id="folio-toc-toggle" title="Table of contents" aria-label="Table of contents">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h7"/></svg>
-  </button>
+  <!-- TOC toggle button — shown once the document has at least one heading.
+       Icon markup is injected by app.js (ICONS.toc) so every SVG icon in the
+       app has a single source of truth instead of being duplicated here. -->
+  <button class="folio-toc-toggle" id="folio-toc-toggle" title="Table of contents" aria-label="Table of contents"></button>
   <div class="folio-toc-backdrop" id="folio-toc-backdrop"></div>
   <aside class="folio-toc-panel" id="folio-toc-panel">
     <div class="folio-toc-header">
       <span class="folio-toc-title">Contents</span>
-      <button class="folio-toc-close" id="folio-toc-close" title="Close" aria-label="Close table of contents">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l10 10M13 3L3 13"/></svg>
-      </button>
+      <button class="folio-toc-close" id="folio-toc-close" title="Close" aria-label="Close table of contents"></button>
     </div>
     <ul class="folio-toc-list" id="folio-toc-list"></ul>
   </aside>
